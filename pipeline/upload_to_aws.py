@@ -5,6 +5,7 @@ from collections import Counter
 import csv
 import os
 import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,6 +16,7 @@ from urllib.parse import urlparse
 SOURCE_DIR = Path(r"C:\Users\jerry\Desktop\new FDS\Processing data\4_psd")
 DESTINATION_S3_URI = "s3://vibration-data-daq/Instrumented fly test dashboard/"
 MISSION_AIRCRAFT_MAP = Path(__file__).resolve().parent / "mission_aircraft_map.csv"
+REFRESH_MISSION_MAP_SCRIPT = Path(__file__).resolve().parent / "refresh_mission_aircraft_map.py"
 LOG_DIR = Path(__file__).resolve().parent / "logs"
 PREFERRED_AWS_PROFILE = "ncode-sso"
 
@@ -74,6 +76,35 @@ def load_mission_aircraft_map(path: Path) -> dict[str, str]:
     if not mission_to_aircraft:
         raise ValueError(f"Mission map did not contain any mission_id/aircraft_id rows: {path}")
     return mission_to_aircraft
+
+
+def refresh_mission_aircraft_map(map_path: Path, required: bool) -> bool:
+    if not REFRESH_MISSION_MAP_SCRIPT.exists():
+        message = f"Mission map refresh script does not exist: {REFRESH_MISSION_MAP_SCRIPT}"
+        if required:
+            raise FileNotFoundError(message)
+        print(f"Mission map refresh skipped: {message}")
+        return False
+
+    print("Refreshing mission aircraft map from Google Sheets...")
+    result = subprocess.run(
+        [sys.executable, str(REFRESH_MISSION_MAP_SCRIPT), "--output", str(map_path)],
+        cwd=str(REFRESH_MISSION_MAP_SCRIPT.parent),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.returncode == 0:
+        return True
+
+    if required:
+        raise RuntimeError("Mission map refresh failed and --require-fresh-mission-map was set.")
+    if map_path.exists():
+        print("Mission map refresh failed; using the existing cached map.")
+        return False
+    raise RuntimeError("Mission map refresh failed and no cached mission map exists.")
 
 
 def split_s3_uri(uri: str) -> tuple[str, str]:
@@ -243,6 +274,13 @@ def upload_outputs(args: argparse.Namespace) -> int:
         print("No final output files found. Expected .xmh files and TAS.csv files.")
         return 1
 
+    if args.refresh_mission_map:
+        try:
+            refresh_mission_aircraft_map(map_path, args.require_fresh_mission_map)
+        except Exception as exc:
+            print(f"Could not refresh mission aircraft map: {exc}")
+            return 1
+
     try:
         mission_to_aircraft = load_mission_aircraft_map(map_path)
     except Exception as exc:
@@ -361,6 +399,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--source", default=str(SOURCE_DIR), help="Folder containing the finished phase output folders.")
     parser.add_argument("--destination", default=DESTINATION_S3_URI, help="Base destination S3 URI. Aircraft folders are added automatically.")
     parser.add_argument("--mission-map", default=str(MISSION_AIRCRAFT_MAP), help="CSV with mission_id and aircraft_id columns.")
+    parser.add_argument("--refresh-mission-map", dest="refresh_mission_map", action="store_true", default=True, help="Refresh mission map from Google Sheets before upload.")
+    parser.add_argument("--no-refresh-mission-map", dest="refresh_mission_map", action="store_false", help="Use the cached mission map CSV without trying Google Sheets.")
+    parser.add_argument("--require-fresh-mission-map", action="store_true", help="Stop if Google Sheets refresh fails instead of using the cached map.")
     parser.add_argument("--profile", default=None, help="AWS profile name. Defaults to AWS_PROFILE, then ncode-sso.")
     parser.add_argument("--force", action="store_true", help="Upload every final output even if the S3 object already exists.")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be uploaded without sending files.")
