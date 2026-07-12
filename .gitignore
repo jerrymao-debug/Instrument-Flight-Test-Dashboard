@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+
+# Local/generated dashboard output
+dashboard_site/
+dashboard_cache/
+*.html
+dashboard_manifest.json
+
+# Logs and local run output
+logs/
+*.log
+
+# Credentials, tokens, and generated links
+.env
+*.env
+*credentials*.json
+dashboard_presigned_url.txt
+dashboard_public_url.txt
+public_dashboard_bucket_policy.json
+aws_admin_request_password_protected_dashboard.md
+
+# Large/local data folders
+Processing data/
+_ncode raw/
+0_phase_split/
+4_psd/
+*.zip
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
