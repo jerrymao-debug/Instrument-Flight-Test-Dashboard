@@ -1805,7 +1805,16 @@ input { min-height: 32px; padding: 0 9px; }
   padding: 9px;
 }
 .strain-tool label { font-weight: 700; }
-.strain-tool .formula { color: #475569; line-height: 1.35; }
+.strain-tool .formula {
+  color: #475569;
+  display: grid;
+  gap: 3px;
+  line-height: 1.35;
+}
+.strain-tool .formula-equation {
+  color: #0f172a;
+  font-weight: 700;
+}
 .sections { display: grid; gap: 14px; }
 .comparison-section {
   background: #fff;
@@ -2016,7 +2025,11 @@ input { min-height: 32px; padding: 0 9px; }
     <div class="strain-tool">
       <label for="strain-scale">Conversion scale gauge factor</label>
       <input id="strain-scale" type="number" step="any" value="1">
-      <div class="formula">Strain PSD (unit: Microstrain) = Voltage PSD (mV) * (conversion factor)^2. From strain (micro strain) = conversion factor * Voltage (mV).</div>
+      <div class="formula">
+        <div>Strain PSD (unit: Microstrain) = Voltage PSD (unit: mV) * (conversion factor)^2.</div>
+        <div>From strain (unit micro strain) = conversion factor * Voltage (unit mV).</div>
+        <div class="formula-equation">PSD<sub>strain (micro strain)</sub> = PSD<sub>voltage (mV)</sub> * CF<sup>2</sup>; strain<sub>micro strain</sub> = CF * Voltage<sub>mV</sub></div>
+      </div>
     </div>
     <div id="sections" class="sections"></div>
   </main>
