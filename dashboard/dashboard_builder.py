@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import hashlib
 import json
@@ -30,7 +31,7 @@ MAX_TAS_POINTS = 2500
 MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
-BUILDER_VERSION = "2026-07-12-static-dashboard-v4-public-links"
+BUILDER_VERSION = "2026-07-12-static-dashboard-v5-mission-pages"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -1011,6 +1012,149 @@ def build_dashboard_payload(
     }
 
 
+def mission_page_relative_path(campaign_id: str, mission_id: str) -> str:
+    return f"missions/{safe_download_name(campaign_id)}/{safe_download_name(mission_id)}.html"
+
+
+def group_counts_from_records(groups: dict[str, dict], mission_id: str | None = None) -> dict[str, int]:
+    counts = empty_group_counts()
+    for kind in KIND_ORDER:
+        records = groups[kind]["files"]
+        if mission_id is not None:
+            records = [record for record in records if record["mission"] == mission_id]
+        counts[kind] = len(records)
+    return counts
+
+
+def mission_summary_for_index(campaign: dict, mission: dict) -> dict:
+    summary = {
+        "id": mission["id"],
+        "name": mission["name"],
+        "file_count": mission.get("file_count", 0),
+        "groups": mission.get("groups", empty_group_counts()),
+        "page_url": mission_page_relative_path(campaign["id"], mission["id"]),
+    }
+    for key in ("download_url", "download_size_label", "download_file_count", "download_s3_uri"):
+        if key in mission:
+            summary[key] = mission[key]
+    return summary
+
+
+def build_index_payload(payload: dict) -> dict:
+    campaigns = []
+    for campaign in payload["campaigns"]:
+        campaigns.append(
+            {
+                "id": campaign["id"],
+                "name": campaign["name"],
+                "total_files": campaign["total_files"],
+                "groups": group_counts_from_records(campaign["groups"]),
+                "missions": [mission_summary_for_index(campaign, mission) for mission in campaign["missions"]],
+            }
+        )
+    return {
+        "title": payload["title"],
+        "source_s3_uri": payload["source_s3_uri"],
+        "generated": payload["generated"],
+        "builder_version": payload["builder_version"],
+        "campaigns": campaigns,
+    }
+
+
+def build_mission_payload(payload: dict, campaign_id: str, mission_id: str) -> dict:
+    source_campaign = next((campaign for campaign in payload["campaigns"] if campaign["id"] == campaign_id), None)
+    if not source_campaign:
+        raise ValueError(f"Campaign not found: {campaign_id}")
+    source_mission = next((mission for mission in source_campaign["missions"] if mission["id"] == mission_id), None)
+    if not source_mission:
+        raise ValueError(f"Mission not found: {campaign_id}/{mission_id}")
+
+    groups: dict[str, dict] = {}
+    series_ids: set[str] = set()
+    phase_stats: dict[str, dict] = {}
+    channels: dict[str, dict] = {}
+
+    for kind in KIND_ORDER:
+        source_group = source_campaign["groups"][kind]
+        records = [copy.deepcopy(record) for record in source_group["files"] if record["mission"] == mission_id]
+        groups[kind] = {
+            "key": source_group["key"],
+            "title": source_group["title"],
+            "x_title": source_group["x_title"],
+            "y_title": source_group["y_title"],
+            "x_axis_type": source_group["x_axis_type"],
+            "y_axis_type": source_group["y_axis_type"],
+            "files": records,
+            "selectors": selectors_for_group(kind, records),
+        }
+        for record in records:
+            series_ids.add(record["id"])
+            phase_stat = phase_stats.setdefault(
+                record["phase"],
+                {"id": record["phase"], "name": record["phase"], "file_count": 0, "groups": empty_group_counts()},
+            )
+            phase_stat["file_count"] += 1
+            phase_stat["groups"][kind] += 1
+
+            if kind not in {"TAS", "STRAIN"}:
+                parsed = source_campaign["series"].get(record["id"], {})
+                for trace in parsed.get("traces", []):
+                    channel = trace.get("channel") or ""
+                    key = normalize_match_text(channel)
+                    if not key:
+                        continue
+                    option = channels.setdefault(
+                        key,
+                        {
+                            "id": f"exact:{channel}",
+                            "name": friendly_channel_name(channel),
+                            "detail": channel,
+                            "token": f"exact:{channel}",
+                            "count": 0,
+                        },
+                    )
+                    option["count"] += 1
+
+    channel_options = [
+        {"id": "all", "name": "All Sensors", "detail": "No accelerometer sensor filter", "token": "all", "count": 0}
+    ]
+    channel_options.extend(sorted(channels.values(), key=lambda option: channel_sort_key(option["detail"])))
+
+    mission = copy.deepcopy(source_mission)
+    campaign = {
+        "id": source_campaign["id"],
+        "name": source_campaign["name"],
+        "total_files": sum(len(groups[kind]["files"]) for kind in KIND_ORDER),
+        "missions": [mission],
+        "phases": sorted(phase_stats.values(), key=lambda item: flight_phase_sort_key(item["name"])),
+        "groups": groups,
+        "series": {file_id: source_campaign["series"][file_id] for file_id in series_ids if file_id in source_campaign["series"]},
+        "channels": channel_options,
+    }
+    return {
+        "title": payload["title"],
+        "source_s3_uri": payload["source_s3_uri"],
+        "generated": payload["generated"],
+        "builder_version": payload["builder_version"],
+        "kinds": payload["kinds"],
+        "page_type": "mission",
+        "home_url": "../../index.html",
+        "campaigns": [campaign],
+    }
+
+
+def build_site_files(payload: dict) -> dict[str, str]:
+    site_files: dict[str, str] = {}
+    index_payload = build_index_payload(payload)
+    for campaign in payload["campaigns"]:
+        for mission in campaign["missions"]:
+            relative_path = mission_page_relative_path(campaign["id"], mission["id"])
+            mission_payload = build_mission_payload(payload, campaign["id"], mission["id"])
+            site_files[relative_path] = render_html(mission_payload)
+    site_files["index.html"] = render_index_html(index_payload)
+    return site_files
+
+
 def json_for_html(payload: dict) -> str:
     return (
         json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
@@ -1025,11 +1169,35 @@ def render_html(payload: dict) -> str:
     return HTML_TEMPLATE.replace("__DASHBOARD_DATA__", data_json)
 
 
-def upload_if_changed(s3_client, html_text: str, manifest: dict, destination_uri: str) -> bool:
+def render_index_html(payload: dict) -> str:
+    data_json = json_for_html(payload)
+    return INDEX_HTML_TEMPLATE.replace("__INDEX_DATA__", data_json)
+
+
+def site_files_hash(site_files: dict[str, str]) -> str:
+    digest = hashlib.sha256()
+    for relative_path in sorted(site_files):
+        digest.update(relative_path.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(hashlib.sha256(site_files[relative_path].encode("utf-8")).hexdigest().encode("ascii"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def write_site_files(site_files: dict[str, str], output_dir: Path) -> list[Path]:
+    written = []
+    for relative_path, html_text in sorted(site_files.items()):
+        target = output_dir / Path(*PurePosixPath(relative_path).parts)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(html_text, encoding="utf-8")
+        written.append(target)
+    return written
+
+
+def upload_if_changed(s3_client, site_files: dict[str, str], manifest: dict, destination_uri: str) -> bool:
     bucket, prefix = split_s3_uri(destination_uri)
-    html_key = f"{prefix}index.html"
     manifest_key = f"{prefix}dashboard_manifest.json"
-    content_hash = hashlib.sha256(html_text.encode("utf-8")).hexdigest()
+    content_hash = site_files_hash(site_files)
     existing_hash = None
     try:
         response = s3_client.get_object(Bucket=bucket, Key=manifest_key)
@@ -1038,16 +1206,28 @@ def upload_if_changed(s3_client, html_text: str, manifest: dict, destination_uri
     except Exception:
         existing_hash = None
     if existing_hash == content_hash:
-        print("No frontend upload needed; generated HTML is unchanged.")
+        print("No frontend upload needed; generated site files are unchanged.")
         return False
-    s3_client.put_object(
-        Bucket=bucket,
-        Key=html_key,
-        Body=html_text.encode("utf-8"),
-        ContentType="text/html; charset=utf-8",
-        CacheControl="no-cache",
-    )
-    manifest = {**manifest, "content_hash": content_hash, "uploaded": datetime.now().isoformat()}
+    upload_order = [relative_path for relative_path in sorted(site_files) if relative_path != "index.html"]
+    if "index.html" in site_files:
+        upload_order.append("index.html")
+    for relative_path in upload_order:
+        key = f"{prefix}{relative_path}"
+        s3_client.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=site_files[relative_path].encode("utf-8"),
+            ContentType="text/html; charset=utf-8",
+            CacheControl="no-cache",
+        )
+        print(f"Uploaded dashboard page: s3://{bucket}/{key}")
+    manifest = {
+        **manifest,
+        "content_hash": content_hash,
+        "site_file_count": len(site_files),
+        "site_files": sorted(site_files),
+        "uploaded": datetime.now().isoformat(),
+    }
     s3_client.put_object(
         Bucket=bucket,
         Key=manifest_key,
@@ -1055,7 +1235,7 @@ def upload_if_changed(s3_client, html_text: str, manifest: dict, destination_uri
         ContentType="application/json; charset=utf-8",
         CacheControl="no-cache",
     )
-    print(f"Uploaded dashboard: s3://{bucket}/{html_key}")
+    print(f"Uploaded dashboard manifest: s3://{bucket}/{manifest_key}")
     return True
 
 
@@ -1119,10 +1299,13 @@ def build_once(args: argparse.Namespace) -> int:
         mission_downloads,
         source_downloads,
     )
-    html_text = render_html(payload)
-    output_file = output_dir / "index.html"
-    output_file.write_text(html_text, encoding="utf-8")
-    print(f"Wrote local dashboard: {output_file} ({human_size(output_file.stat().st_size)})")
+    site_files = build_site_files(payload)
+    written_files = write_site_files(site_files, output_dir)
+    index_file = output_dir / "index.html"
+    print(
+        f"Wrote local dashboard: {index_file} ({human_size(index_file.stat().st_size)}) "
+        f"and {len(written_files) - 1} mission pages"
+    )
 
     manifest = {
         "source_uri": args.source,
@@ -1136,7 +1319,7 @@ def build_once(args: argparse.Namespace) -> int:
     if args.no_upload:
         print("No upload requested.")
         return 0
-    upload_if_changed(s3_client, html_text, manifest, args.destination)
+    upload_if_changed(s3_client, site_files, manifest, args.destination)
     return 0
 
 
@@ -1158,13 +1341,12 @@ def main(argv: list[str] | None = None) -> int:
     return build_once(args)
 
 
-HTML_TEMPLATE = r"""<!doctype html>
+INDEX_HTML_TEMPLATE = r"""<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Instrument Campaign</title>
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <style>
 * { box-sizing: border-box; }
 body {
@@ -1215,6 +1397,319 @@ input { min-height: 32px; padding: 0 9px; }
   background: #fff;
   padding: 8px;
 }
+.filter-head {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  min-width: 150px;
+  padding: 4px 8px;
+  border-right: 1px solid #d6dce8;
+  color: #111827;
+  font-weight: 700;
+}
+.filter-head small {
+  color: #475569;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.filter-body { min-width: 0; display: grid; gap: 7px; }
+.button-row { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 1px; }
+.mission-choice {
+  display: flex;
+  gap: 6px;
+  align-items: stretch;
+  flex: 0 0 auto;
+}
+.mission-choice .choice-button { min-width: 240px; }
+.choice-button {
+  display: grid;
+  gap: 2px;
+  min-width: 134px;
+  max-width: 260px;
+  min-height: 38px;
+  flex: 0 0 auto;
+  padding: 6px 9px;
+  border: 1px solid #c7d2e4;
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  text-align: left;
+  text-decoration: none;
+}
+.choice-button:hover { background: #f5f7fb; }
+.choice-button.active {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #fff;
+}
+.choice-button.summary {
+  cursor: default;
+}
+.choice-button.summary:hover {
+  background: #fff;
+}
+.choice-button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.choice-button small {
+  display: block;
+  overflow: hidden;
+  color: inherit;
+  font-size: 10px;
+  line-height: 1.2;
+  opacity: 0.78;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.download-button {
+  display: grid;
+  align-content: center;
+  min-width: 88px;
+  padding: 7px 10px;
+  border: 1px solid #c7d2e4;
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  text-decoration: none;
+  line-height: 1.2;
+}
+.download-button:hover { background: #f5f7fb; }
+.download-button span { font-weight: 700; }
+.download-button small { display: block; margin-top: 2px; color: #64748b; white-space: nowrap; }
+.download-button.disabled {
+  pointer-events: none;
+  opacity: 0.45;
+}
+.empty-state {
+  border: 1px solid #ead7a4;
+  border-radius: 6px;
+  background: #fffbeb;
+  color: #6f4f00;
+  padding: 9px 10px;
+}
+@media (max-width: 900px) {
+  main { padding: 14px 10px 26px; }
+  .page-head { display: grid; }
+  .filter-block { grid-template-columns: 1fr; }
+  .filter-head { border-right: 0; border-bottom: 1px solid #d6dce8; }
+  .mission-choice { display: grid; min-width: 260px; }
+  .mission-choice .choice-button, .download-button { min-width: 0; }
+}
+  </style>
+</head>
+<body>
+  <main>
+    <header class="page-head">
+      <div>
+        <h1>Instrument Campaign</h1>
+        <div class="meta">
+          <div><strong>S3 source:</strong> <span id="s3-source"></span></div>
+          <div><strong>Generated:</strong> <span id="generated"></span></div>
+          <div><strong>Current view:</strong> <span id="current-view"></span></div>
+        </div>
+      </div>
+    </header>
+    <div id="status-line" class="status-line">Starting...</div>
+    <div id="campaign-filter" class="filter-block"></div>
+    <div id="mission-filter" class="filter-block"></div>
+  </main>
+  <script id="index-data" type="application/json">__INDEX_DATA__</script>
+  <script>
+const payload = JSON.parse(document.getElementById("index-data").textContent);
+const KINDS = ["TAS", "ERS", "FDS", "PSD", "STRAIN"];
+let campaignId = payload.campaigns[0]?.id || "";
+let missionSearch = "";
+const elements = {
+  status: document.getElementById("status-line"),
+  currentView: document.getElementById("current-view"),
+  s3: document.getElementById("s3-source"),
+  generated: document.getElementById("generated"),
+  campaign: document.getElementById("campaign-filter"),
+  mission: document.getElementById("mission-filter"),
+};
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+function currentCampaign() {
+  return payload.campaigns.find((item) => item.id === campaignId) || payload.campaigns[0];
+}
+function groupDetail(groups) {
+  return `TAS ${groups.TAS || 0} | ERS ${groups.ERS || 0} | FDS ${groups.FDS || 0} | PSD ${groups.PSD || 0} | Strain ${groups.STRAIN || 0}`;
+}
+function choiceButton(option, active, attr) {
+  return `<button class="choice-button ${active ? "active" : ""}" type="button" ${attr}="${escapeHtml(option.id)}">
+    <span>${escapeHtml(option.name)}</span>
+    <small>${escapeHtml(option.detail || "")}</small>
+  </button>`;
+}
+function missionChoice(mission) {
+  const detail = groupDetail(mission.groups || {});
+  const link = `<a class="choice-button" href="${escapeHtml(mission.page_url)}" title="Open ${escapeHtml(mission.name)} dashboard">
+    <span>${escapeHtml(mission.name)}</span>
+    <small>${escapeHtml(detail)}</small>
+  </a>`;
+  const download = mission.download_url
+    ? `<a class="download-button" href="${escapeHtml(mission.download_url)}" target="_blank" rel="noopener" download title="Download ${escapeHtml(mission.name)} mission files from AWS">
+        <span>Download</span>
+        <small>${escapeHtml(mission.download_size_label || "")}</small>
+      </a>`
+    : `<span class="download-button disabled" title="Download will be available after the dashboard uploads">
+        <span>Download</span>
+        <small>Preparing</small>
+      </span>`;
+  return `<div class="mission-choice">${link}${download}</div>`;
+}
+function buildCampaignFilter() {
+  if (!payload.campaigns.length) {
+    elements.campaign.innerHTML = `<div class="empty-state">No zip folders were found in the source bucket.</div>`;
+    return;
+  }
+  elements.campaign.innerHTML = `<div class="filter-head"><span>Zip Number</span><small>${escapeHtml(campaignId)}</small></div>
+    <div class="filter-body"><div class="button-row">
+      ${payload.campaigns.map((campaign) => {
+        const detail = groupDetail(campaign.groups || {});
+        return choiceButton({ id: campaign.id, name: campaign.name, detail }, campaign.id === campaignId, "data-campaign");
+      }).join("")}
+    </div></div>`;
+  elements.campaign.querySelectorAll("[data-campaign]").forEach((button) => {
+    button.addEventListener("click", () => {
+      campaignId = button.dataset.campaign;
+      missionSearch = "";
+      rebuild();
+    });
+  });
+}
+function buildMissionFilter() {
+  const campaign = currentCampaign();
+  if (!campaign) {
+    elements.mission.innerHTML = "";
+    return;
+  }
+  const query = missionSearch.trim().toLowerCase();
+  const missions = (campaign.missions || []).filter((mission) => !query || `${mission.name} ${mission.id}`.toLowerCase().includes(query));
+  const allSummary = `<span class="choice-button summary">
+    <span>All Missions</span>
+    <small>${escapeHtml(`${campaign.total_files || 0} files`)}</small>
+  </span>`;
+  elements.mission.innerHTML = `<div class="filter-head"><span>Mission ID</span><small>${escapeHtml(query ? "Search" : "Select a mission")}</small></div>
+    <div class="filter-body">
+      <input id="mission-search" type="search" placeholder="Search mission ID" value="${escapeHtml(missionSearch)}">
+      <div class="button-row">
+        ${allSummary}
+        ${missions.map((mission) => missionChoice(mission)).join("")}
+      </div>
+    </div>`;
+  const search = document.getElementById("mission-search");
+  search.addEventListener("input", () => {
+    missionSearch = search.value;
+    buildMissionFilter();
+    updateStatus();
+  });
+}
+function updateStatus() {
+  const campaign = currentCampaign();
+  const missionCount = campaign?.missions?.length || 0;
+  const matchCount = campaign ? (campaign.missions || []).filter((mission) => {
+    const query = missionSearch.trim().toLowerCase();
+    return !query || `${mission.name} ${mission.id}`.toLowerCase().includes(query);
+  }).length : 0;
+  elements.status.textContent = campaign
+    ? `Ready. Zip ${campaign.id} has ${missionCount} missions. ${matchCount} mission${matchCount === 1 ? "" : "s"} shown.`
+    : "No campaign data found.";
+  elements.currentView.textContent = campaign ? `Zip ${campaign.id} | Select a mission` : "No campaign selected";
+}
+function rebuild() {
+  buildCampaignFilter();
+  buildMissionFilter();
+  updateStatus();
+}
+function initialize() {
+  elements.s3.textContent = payload.source_s3_uri || "";
+  elements.generated.textContent = payload.generated || "";
+  rebuild();
+}
+initialize();
+  </script>
+</body>
+</html>
+"""
+
+
+HTML_TEMPLATE = r"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Instrument Campaign</title>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #f4f6fa;
+  color: #111827;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 12px;
+  letter-spacing: 0;
+}
+main { max-width: 1680px; margin: 0 auto; padding: 18px 16px 34px; }
+h1 { margin: 0 0 6px; color: #000; font-size: 20px; font-weight: 700; line-height: 1.25; }
+button, input {
+  border: 1px solid #c7d2e4;
+  border-radius: 6px;
+  background: #fff;
+  color: #111827;
+  font: inherit;
+}
+button { cursor: pointer; }
+button:hover { background: #f5f7fb; }
+input { min-height: 32px; padding: 0 9px; }
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+.meta { display: grid; gap: 3px; color: #334155; line-height: 1.35; overflow-wrap: anywhere; }
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 8px;
+  color: #0f766e;
+  font-weight: 700;
+  text-decoration: none;
+}
+.back-link:hover { text-decoration: underline; }
+.status-line {
+  border: 1px solid #b9d8c4;
+  border-radius: 6px;
+  background: #f3fbf6;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  color: #1d5d35;
+  line-height: 1.35;
+}
+.filter-block {
+  display: grid;
+  grid-template-columns: 170px minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+  margin: 0 0 10px;
+  border: 1px solid #d6dce8;
+  border-radius: 6px;
+  background: #fff;
+  padding: 8px;
+}
+.mission-page-hidden { display: none; }
 .filter-head {
   display: grid;
   align-content: center;
@@ -1504,6 +1999,7 @@ input { min-height: 32px; padding: 0 9px; }
   <main>
     <header class="page-head">
       <div>
+        <a class="back-link" href="../../index.html">Back to mission selector</a>
         <h1>Instrument Campaign</h1>
         <div class="meta">
           <div><strong>S3 source:</strong> <span id="s3-source"></span></div>
@@ -1513,8 +2009,8 @@ input { min-height: 32px; padding: 0 9px; }
       </div>
     </header>
     <div id="status-line" class="status-line">Starting...</div>
-    <div id="campaign-filter" class="filter-block"></div>
-    <div id="mission-filter" class="filter-block"></div>
+    <div id="campaign-filter" class="filter-block mission-page-hidden"></div>
+    <div id="mission-filter" class="filter-block mission-page-hidden"></div>
     <div id="phase-filter" class="filter-block"></div>
     <div id="frequency-channel-filter" class="filter-block"></div>
     <div class="strain-tool">
