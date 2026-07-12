@@ -14,7 +14,15 @@ BUILDER_S3_URI = "s3://vibration-data-daq/insturment_fly_test_dashboard_code/das
 LOCAL_BUILDER = "/tmp/instrument_dashboard_builder.py"
 CACHE_DIR = "/dbfs/tmp/instrument_dashboard_cache"
 OUTPUT_DIR = "/dbfs/tmp/instrument_dashboard_site"
+PUBLIC_BASE_URL = "https://vibration-data-daq.s3.us-west-2.amazonaws.com/insturment_fly_test_dashboard_code"
 RUN_EVERY_SECONDS = 600
+
+
+def ensure_python_packages() -> None:
+    try:
+        import boto3  # noqa: F401
+    except ImportError:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "boto3"])
 
 
 def copy_builder_from_s3() -> None:
@@ -23,6 +31,7 @@ def copy_builder_from_s3() -> None:
 
 
 def run_builder_once() -> int:
+    ensure_python_packages()
     copy_builder_from_s3()
     command = [
         sys.executable,
@@ -31,6 +40,8 @@ def run_builder_once() -> int:
         CACHE_DIR,
         "--output-dir",
         OUTPUT_DIR,
+        "--public-base-url",
+        PUBLIC_BASE_URL,
     ]
     result = subprocess.run(command, text=True, capture_output=True)
     print(f"\n[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] dashboard refresh")
