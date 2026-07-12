@@ -2016,7 +2016,7 @@ input { min-height: 32px; padding: 0 9px; }
     <div class="strain-tool">
       <label for="strain-scale">Conversion scale gauge factor</label>
       <input id="strain-scale" type="number" step="any" value="1">
-      <div class="formula">micro strain = conversion scale gauge factor * Voltage. Strain PSD y values are original PSD * gauge factor^2.</div>
+      <div class="formula">Strain PSD (unit: Microstrain) = Voltage PSD (mV) * (conversion factor)^2. From strain = conversion factor * Voltage.</div>
     </div>
     <div id="sections" class="sections"></div>
   </main>
