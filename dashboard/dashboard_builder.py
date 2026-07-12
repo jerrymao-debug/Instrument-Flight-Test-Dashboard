@@ -1357,7 +1357,7 @@ body {
   font-size: 12px;
   letter-spacing: 0;
 }
-main { max-width: 1680px; margin: 0 auto; padding: 18px 16px 34px; }
+main { width: 100%; max-width: none; margin: 0; padding: 18px 16px 34px; }
 h1 { margin: 0 0 6px; color: #000; font-size: 20px; font-weight: 700; line-height: 1.25; }
 button, input {
   border: 1px solid #c7d2e4;
@@ -1660,7 +1660,7 @@ body {
   font-size: 12px;
   letter-spacing: 0;
 }
-main { max-width: 1680px; margin: 0 auto; padding: 18px 16px 34px; }
+main { width: 100%; max-width: none; margin: 0; padding: 18px 16px 34px; }
 h1 { margin: 0 0 6px; color: #000; font-size: 20px; font-weight: 700; line-height: 1.25; }
 button, input {
   border: 1px solid #c7d2e4;
@@ -2026,9 +2026,7 @@ input { min-height: 32px; padding: 0 9px; }
       <label for="strain-scale">Conversion scale gauge factor</label>
       <input id="strain-scale" type="number" step="any" value="1">
       <div class="formula">
-        <div>Strain PSD (unit: Microstrain) = Voltage PSD (unit: mV) * (conversion factor)^2.</div>
-        <div>From strain (unit micro strain) = conversion factor * Voltage (unit mV).</div>
-        <div class="formula-equation">PSD<sub>strain (micro strain)</sub> = PSD<sub>voltage (mV)</sub> * CF<sup>2</sup>; strain<sub>micro strain</sub> = CF * Voltage<sub>mV</sub></div>
+        <div class="formula-equation">PSD<sub>strain (unit: Microstrain)</sub> = PSD<sub>voltage (unit: mV)</sub> * CF<sup>2</sup>; strain<sub>unit micro strain</sub> = CF * Voltage<sub>unit mV</sub></div>
       </div>
     </div>
     <div id="sections" class="sections"></div>
@@ -2567,9 +2565,9 @@ function layoutFor(kind, traces) {
     paper_bgcolor: "#ffffff",
     plot_bgcolor: "#ffffff",
     font: { family: "Arial, Helvetica, sans-serif", color: "#000000", size: 11 },
-    margin: { l: 68, r: useSideLegend ? 320 : 18, t: 42, b: useSideLegend ? 52 : 118 },
+    margin: { l: 68, r: useSideLegend ? 190 : 18, t: 42, b: useSideLegend ? 52 : 118 },
     legend: useSideLegend ? {
-      x: 1.02, y: 1, xanchor: "left", yanchor: "top", bgcolor: "rgba(255,255,255,0.96)",
+      x: 1.01, y: 1, xanchor: "left", yanchor: "top", bgcolor: "rgba(255,255,255,0.96)",
       bordercolor: "#000000", borderwidth: 1, font: { size: 9, color: "#000000" }, itemsizing: "constant",
     } : {
       x: 0, y: -0.24, xanchor: "left", yanchor: "top", orientation: "h", bgcolor: "rgba(255,255,255,0.96)",
