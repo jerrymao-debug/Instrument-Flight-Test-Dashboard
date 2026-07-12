@@ -34,7 +34,11 @@ def check_paths() -> None:
 
 
 def ncode_files() -> list[Path]:
-    return sorted(path for path in RAW_NCODE_DIR.rglob("*.s3t") if path.is_file())
+    return sorted(
+        path
+        for path in RAW_NCODE_DIR.rglob("*.s3t")
+        if path.is_file() and not any(part.startswith("_") for part in path.relative_to(RAW_NCODE_DIR).parts[:-1])
+    )
 
 
 def safe_name(value: str) -> str:
@@ -131,11 +135,14 @@ def run_flowproc(input_file: Path) -> None:
 
     if result.stdout:
         print(result.stdout)
-    if result.returncode != 0:
+    outputs = existing_outputs_for(input_file)
+    if result.returncode != 0 and not outputs:
         print(f"Flowproc log: {log_path}")
         raise RuntimeError(f"flowproc failed with exit code {result.returncode}")
+    if result.returncode != 0 and outputs:
+        print(f"Flowproc returned exit code {result.returncode}, but {len(outputs)} output file(s) were saved.")
+        print(f"Flowproc log: {log_path}")
 
-    outputs = existing_outputs_for(input_file)
     if not outputs:
         print(f"Flowproc log: {log_path}")
         raise RuntimeError("flowproc completed, but no matching .s3t outputs were found.")

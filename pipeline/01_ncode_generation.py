@@ -16,6 +16,35 @@ APP_START_TIMEOUT_SECONDS = 60
 PAGE_TIMEOUT_SECONDS = 300
 
 
+def detect_csv_layout(csv_path: Path) -> dict[str, int]:
+    lines: list[str] = []
+    with csv_path.open("r", encoding="utf-8-sig", errors="replace") as handle:
+        for _ in range(20):
+            line = handle.readline()
+            if not line:
+                break
+            lines.append(line.strip())
+
+    def line_after(marker: str) -> int | None:
+        try:
+            return lines.index(marker) + 2
+        except ValueError:
+            return None
+
+    title_line = line_after("#TITLES")
+    unit_line = line_after("#UNITS")
+    try:
+        header_lines = lines.index("#DATA") + 1
+    except ValueError:
+        header_lines = unit_line or 4
+
+    return {
+        "header_lines": header_lines,
+        "title_line": title_line or 2,
+        "unit_line": unit_line or 4,
+    }
+
+
 def require_pywinauto():
     try:
         from pywinauto import Application
@@ -132,16 +161,24 @@ def fill_input_page(window, csv_path: Path) -> None:
     click_button(window, "Next")
 
 
-def fill_layout_page(window) -> None:
+def fill_layout_page(window, csv_path: Path) -> None:
     wait_for_page(window, "Layout")
     edits = window.descendants(control_type="Edit")
     if len(edits) < 4:
         raise RuntimeError("Could not find the layout fields.")
 
-    set_edit_text(edits[0], "4")  # Number of header lines
+    layout = detect_csv_layout(csv_path)
+    print(
+        "CSV layout: "
+        f"header lines={layout['header_lines']}, "
+        f"title line={layout['title_line']}, "
+        f"unit line={layout['unit_line']}"
+    )
+
+    set_edit_text(edits[0], str(layout["header_lines"]))  # Number of header lines
     set_edit_text(edits[1], "")  # Number of channels, blank means auto-detect
-    set_edit_text(edits[2], "2")  # Line number for channel titles
-    set_edit_text(edits[3], "4")  # Line number for units
+    set_edit_text(edits[2], str(layout["title_line"]))  # Line number for channel titles
+    set_edit_text(edits[3], str(layout["unit_line"]))  # Line number for units
 
     set_check_box(window, "Tab separated", False)
     set_check_box(window, "Comma separated", True)
@@ -194,7 +231,7 @@ def translate_one_csv(Application, csv_path: Path, overwrite: bool = False) -> P
 
     try:
         fill_input_page(window, csv_path)
-        fill_layout_page(window)
+        fill_layout_page(window, csv_path)
         fill_time_series_details_page(window)
         click_button(window, "Translate")
 
