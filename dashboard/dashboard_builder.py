@@ -27,6 +27,7 @@ LOCAL_CACHE_DIR = Path(r"C:\Users\jerry\Desktop\new FDS\dashboard_cache")
 PREFERRED_AWS_PROFILE = "ncode-sso"
 
 MAX_FREQ_POINTS = 950
+MAX_FREQ_DOWNSAMPLE_REMOVED = 1000
 MAX_TAS_POINTS = 2500
 MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
@@ -403,6 +404,10 @@ def downsample_xy(x_values: list[float], y_values: list[float], max_points: int)
     )
 
 
+def frequency_downsample_limit(point_count: int) -> int:
+    return max(MAX_FREQ_POINTS, point_count - MAX_FREQ_DOWNSAMPLE_REMOVED)
+
+
 def detect_encoding(path: Path) -> str:
     with path.open("rb") as handle:
         start = handle.read(4096)
@@ -597,7 +602,8 @@ def parse_xmh_histogram(path: Path, file_id: str, kind: str) -> dict:
             y_units = "microstrain^2/Hz"
         x_label = f"{x_title} ({x_units})" if x_units else x_title
         y_label = f"{y_title} ({y_units})" if y_units else y_title
-        sampled_x, sampled_y, removed_count = downsample_xy(x_values, y_values, MAX_FREQ_POINTS)
+        point_count = min(len(x_values), len(y_values))
+        sampled_x, sampled_y, removed_count = downsample_xy(x_values, y_values, frequency_downsample_limit(point_count))
         if removed_count:
             warnings.append(f"{trace_title}: downsampled by {removed_count} points.")
         traces.append(
