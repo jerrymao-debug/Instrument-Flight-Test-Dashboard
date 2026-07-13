@@ -2,9 +2,15 @@
 
 This repository contains the source code for the Instrument Flight Test dashboard and the nCode processing/upload helpers.
 
-Current public dashboard:
+Current temporary public dashboard:
 
 https://vibration-data-daq.s3.us-west-2.amazonaws.com/insturment_fly_test_dashboard_code/index.html
+
+For durable hosting, use CloudFront in front of the private S3 prefix. See:
+
+```text
+docs/cloudfront_private_s3.md
+```
 
 ## Repository Layout
 
@@ -79,6 +85,15 @@ dashboard/databricks_dashboard_refresh.py
 
 That script downloads `dashboard_builder.py` from S3 and runs it every 600 seconds.
 
+To switch Databricks output links to CloudFront after infra creates the distribution, set:
+
+```python
+import os
+os.environ["DASHBOARD_PUBLIC_BASE_URL"] = "https://<cloudfront-domain>"
+```
+
+The same value can be passed locally with `--public-base-url`.
+
 ## nCode Pipeline
 
 Main local pipeline:
@@ -106,5 +121,6 @@ python .\upload_to_aws.py --profile ncode-sso
 ## Notes
 
 - Do not commit generated dashboards, caches, logs, presigned URLs, or credential files.
-- The current S3 public access is scoped to `insturment_fly_test_dashboard_code/*`.
+- The current raw S3 public access is scoped to `insturment_fly_test_dashboard_code/*`, but it can be reset by bucket security automation.
+- The durable hosting path is CloudFront with private S3; see `docs/cloudfront_private_s3.md`.
 - The optional password-protected CloudFront deployment requires additional CloudFront IAM permissions.

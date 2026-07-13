@@ -7,6 +7,7 @@
 import subprocess
 import sys
 import time
+import os
 from datetime import datetime
 
 
@@ -14,7 +15,8 @@ BUILDER_S3_URI = "s3://vibration-data-daq/insturment_fly_test_dashboard_code/das
 LOCAL_BUILDER = "/tmp/instrument_dashboard_builder.py"
 CACHE_DIR = "/dbfs/tmp/instrument_dashboard_cache"
 OUTPUT_DIR = "/dbfs/tmp/instrument_dashboard_site"
-PUBLIC_BASE_URL = "https://vibration-data-daq.s3.us-west-2.amazonaws.com/insturment_fly_test_dashboard_code"
+DEFAULT_PUBLIC_BASE_URL = "https://vibration-data-daq.s3.us-west-2.amazonaws.com/insturment_fly_test_dashboard_code"
+PUBLIC_BASE_URL = os.environ.get("DASHBOARD_PUBLIC_BASE_URL", DEFAULT_PUBLIC_BASE_URL).strip().rstrip("/")
 RUN_EVERY_SECONDS = 600
 
 
