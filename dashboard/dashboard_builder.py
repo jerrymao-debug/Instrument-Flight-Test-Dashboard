@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-17-static-dashboard-v10-mission-context"
+BUILDER_VERSION = "2026-07-17-static-dashboard-v11-data-only-filter"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2343,6 +2343,7 @@ input { min-height: 32px; padding: 0 9px; }
     <div id="sensor-context" class="sensor-context"></div>
     <div id="campaign-filter" class="filter-block mission-page-hidden"></div>
     <div id="mission-filter" class="filter-block mission-page-hidden"></div>
+    <div id="data-filter" class="filter-block"></div>
     <div id="phase-filter" class="filter-block"></div>
     <div id="frequency-channel-filter" class="filter-block"></div>
     <div class="strain-tool">
@@ -2369,6 +2370,7 @@ let activePhase = "all";
 let frequencyChannel = "all";
 let selectedSensorId = queryParams.get("sensor") || "all";
 let strainScale = 1;
+let showDataOnly = true;
 const state = Object.fromEntries(KINDS.map((kind) => [kind, "all"]));
 const visibleState = Object.fromEntries(KINDS.map((kind) => [kind, new Set(["all"])]));
 const warningExpanded = Object.fromEntries(KINDS.map((kind) => [kind, false]));
@@ -2381,6 +2383,7 @@ const elements = {
   sensorContext: document.getElementById("sensor-context"),
   campaign: document.getElementById("campaign-filter"),
   mission: document.getElementById("mission-filter"),
+  dataFilter: document.getElementById("data-filter"),
   phase: document.getElementById("phase-filter"),
   frequencyChannel: document.getElementById("frequency-channel-filter"),
   sections: document.getElementById("sections"),
@@ -2488,6 +2491,22 @@ function selectorsFor(kind) {
   const campaign = currentCampaign();
   return (campaign.groups[kind].selectors || []).filter((record) => missionMatches(record) && (record.type === "all" || phaseMatches(kind, record)));
 }
+function traceMagnitude(trace) {
+  let maxValue = 0;
+  for (const value of trace.y || []) {
+    const number = Math.abs(Number(value));
+    if (Number.isFinite(number) && number > maxValue) maxValue = number;
+  }
+  return maxValue;
+}
+function traceHasFinitePoints(trace) {
+  let count = 0;
+  for (const value of trace.y || []) {
+    if (Number.isFinite(Number(value))) count += 1;
+    if (count >= 2) return true;
+  }
+  return false;
+}
 function traceAllowedForKind(kind, trace) {
   if (!traceMatchesSelectedSensor(kind, trace)) return false;
   return kind === "TAS" || kind === "STRAIN" || traceMatchesChannel(trace);
@@ -2495,38 +2514,74 @@ function traceAllowedForKind(kind, trace) {
 function traceOptionId(record, traceIndex) {
   return `${record.id}::trace::${traceIndex}`;
 }
+function baseTraceEntriesFor(kind, includeChannelFilter = true) {
+  const campaign = currentCampaign();
+  const entries = [];
+  for (const record of recordsFor(kind)) {
+    const parsed = campaign.series[record.id];
+    if (!parsed) continue;
+    (parsed.traces || []).forEach((trace, traceIndex) => {
+      const allowed = includeChannelFilter
+        ? traceAllowedForKind(kind, trace)
+        : traceMatchesSelectedSensor(kind, trace);
+      if (!allowed) return;
+      entries.push({ record, trace, traceIndex, id: traceOptionId(record, traceIndex), magnitude: traceMagnitude(trace) });
+    });
+  }
+  return entries;
+}
+function dataFilteredEntries(entries) {
+  if (!showDataOnly) return entries;
+  const validEntries = entries.filter((entry) => traceHasFinitePoints(entry.trace) && entry.magnitude > 0);
+  if (!validEntries.length) return [];
+  const strongest = Math.max(...validEntries.map((entry) => entry.magnitude));
+  const threshold = strongest * 1e-8;
+  const filtered = validEntries.filter((entry) => entry.magnitude > threshold);
+  return filtered.length ? filtered : validEntries;
+}
+function traceEntriesFor(kind) {
+  return dataFilteredEntries(baseTraceEntriesFor(kind, true));
+}
+function channelTraceEntriesFor(kind) {
+  return dataFilteredEntries(baseTraceEntriesFor(kind, false));
+}
+function recordsWithDataFor(kind) {
+  if (!showDataOnly) return recordsFor(kind);
+  const recordIds = new Set(traceEntriesFor(kind).map((entry) => entry.record.id));
+  return recordsFor(kind).filter((record) => recordIds.has(record.id));
+}
 function traceSelectorOptionsFor(kind) {
   const options = [{ id: "all", type: "all", number: "All", name: `${kind} (All)`, detail: "Show matching graph lines", phase: "all", mission: "all" }];
   let graphNumber = 1;
-  for (const record of recordsFor(kind)) {
-    const parsed = currentCampaign().series[record.id];
-    if (!parsed) continue;
-    (parsed.traces || []).forEach((trace, traceIndex) => {
-      if (!traceAllowedForKind(kind, trace)) return;
-      const label = compactLegendName(trace.name);
-      options.push({
-        id: traceOptionId(record, traceIndex),
-        type: "trace",
-        number: `Graph ${graphNumber}`,
-        name: label,
-        detail: `${record.mission} | ${record.phase} | ${trace.channel || "Channel"}`,
-        file_name: trace.name,
-        source_name: record.name,
-        phase: record.phase,
-        mission: record.mission,
-        record_id: record.id,
-        trace_index: traceIndex,
-        channel: trace.channel || "",
-        download_url: record.download_url || "",
-        download_s3_uri: record.download_s3_uri || "",
-      });
-      graphNumber += 1;
+  for (const entry of traceEntriesFor(kind)) {
+    const { record, trace, traceIndex, id } = entry;
+    const label = compactLegendName(trace.name);
+    options.push({
+      id,
+      type: "trace",
+      number: `Graph ${graphNumber}`,
+      name: label,
+      detail: `${record.mission} | ${record.phase} | ${trace.channel || "Channel"}`,
+      file_name: trace.name,
+      source_name: record.name,
+      phase: record.phase,
+      mission: record.mission,
+      record_id: record.id,
+      trace_index: traceIndex,
+      channel: trace.channel || "",
+      download_url: record.download_url || "",
+      download_s3_uri: record.download_s3_uri || "",
     });
+    graphNumber += 1;
   }
   return options;
 }
 function selectionOptionsFor(kind) {
-  return kind === "TAS" ? selectorsFor(kind) : traceSelectorOptionsFor(kind);
+  if (kind !== "TAS") return traceSelectorOptionsFor(kind);
+  const options = selectorsFor(kind);
+  if (!showDataOnly) return options;
+  const recordIds = new Set(recordsWithDataFor(kind).map((record) => record.id));
+  return options.filter((option) => option.type === "all" || recordIds.has(option.id));
 }
 function getVisibleSet(kind) {
   if (!visibleState[kind]) visibleState[kind] = new Set(["all"]);
@@ -2691,6 +2746,21 @@ function buildMissionFilter() {
     });
   });
 }
+function buildDataFilter() {
+  elements.dataFilter.innerHTML = `<div class="filter-head"><span>Data Display</span><small>${showDataOnly ? "Only traces with data" : "All traces"}</small></div>
+    <div class="filter-body"><div class="button-row">
+      ${choiceButton({ id: "data-only", name: "Only Show Traces With Data", detail: "Hide empty or near-zero sensor lines" }, showDataOnly, "data-display-mode")}
+      ${choiceButton({ id: "all-traces", name: "Show All Traces", detail: "Include every parsed graph line" }, !showDataOnly, "data-display-mode")}
+    </div></div>`;
+  elements.dataFilter.querySelectorAll("[data-display-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      showDataOnly = button.dataset.displayMode === "data-only";
+      frequencyChannel = "all";
+      resetSelections();
+      rebuildAll();
+    });
+  });
+}
 function buildPhaseFilter() {
   const phases = [{ id: "all", name: "All Phases", detail: `TAS ${missionCountsFor(currentCampaign(), missionFilter).TAS || 0}` }, ...phaseSummariesForMission().map((phase) => {
     const groups = phase.groups || {};
@@ -2715,15 +2785,12 @@ function channelOptionsForScope() {
     if (option.id === "all") channels.set(option.id, option);
   }
   for (const kind of KINDS.filter((item) => item !== "TAS" && item !== "STRAIN")) {
-    for (const record of recordsFor(kind)) {
-      const parsed = campaign.series[record.id];
-      for (const trace of parsed?.traces || []) {
-        if (!traceMatchesSelectedSensor(kind, trace)) continue;
-        const id = `exact:${trace.channel}`;
-        if (!channels.has(id)) {
-          const found = (campaign.channels || []).find((item) => item.id === id);
-          channels.set(id, found || { id, name: trace.channel, detail: trace.channel, token: id });
-        }
+    for (const entry of channelTraceEntriesFor(kind)) {
+      const trace = entry.trace;
+      const id = `exact:${trace.channel}`;
+      if (!channels.has(id)) {
+        const found = (campaign.channels || []).find((item) => item.id === id);
+        channels.set(id, found || { id, name: trace.channel, detail: trace.channel, token: id });
       }
     }
   }
@@ -2865,7 +2932,7 @@ function traceMatchesChannel(trace) {
 }
 function selectedRecords(kind) {
   const visible = getVisibleSet(kind);
-  const records = recordsFor(kind);
+  const records = recordsWithDataFor(kind);
   if (visible.size === 0) return [];
   if (visible.has("all")) return records;
   const ids = new Set(visible);
@@ -2879,29 +2946,33 @@ function tracesFor(kind) {
     const visible = getVisibleSet(kind);
     if (visible.size === 0) return { traces, warnings };
     const selectedTraceIds = visible.has("all") ? null : new Set(visible);
+    const warningRecordIds = new Set();
+    for (const entry of traceEntriesFor(kind)) {
+      const { record, trace, id } = entry;
+      if (selectedTraceIds && !selectedTraceIds.has(id)) continue;
+      warningRecordIds.add(record.id);
+      if (kind === "STRAIN") {
+        const scaleSquared = strainScale * strainScale;
+        traces.push({ ...trace, y: trace.y.map((value) => value * scaleSquared), y_label: "PSD (microstrain^2/Hz)" });
+      } else {
+        traces.push(trace);
+      }
+    }
     for (const record of recordsFor(kind)) {
+      if (!warningRecordIds.has(record.id)) continue;
       const parsed = campaign.series[record.id];
       if (!parsed) continue;
-      (parsed.traces || []).forEach((trace, traceIndex) => {
-        if (!traceAllowedForKind(kind, trace)) return;
-        if (selectedTraceIds && !selectedTraceIds.has(traceOptionId(record, traceIndex))) return;
-        if (kind === "STRAIN") {
-          const scaleSquared = strainScale * strainScale;
-          traces.push({ ...trace, y: trace.y.map((value) => value * scaleSquared), y_label: "PSD (microstrain^2/Hz)" });
-        } else {
-          traces.push(trace);
-        }
-      });
       for (const warning of parsed.warnings || []) warnings.push(`${record.name}: ${warning}`);
     }
     return { traces, warnings };
   }
+  const selectedRecordIds = new Set(selectedRecords(kind).map((record) => record.id));
+  for (const entry of traceEntriesFor(kind)) {
+    if (selectedRecordIds.has(entry.record.id)) traces.push(entry.trace);
+  }
   for (const record of selectedRecords(kind)) {
     const parsed = campaign.series[record.id];
     if (!parsed) continue;
-    for (const trace of parsed.traces || []) {
-      traces.push(trace);
-    }
     for (const warning of parsed.warnings || []) warnings.push(`${record.name}: ${warning}`);
   }
   return { traces, warnings };
@@ -3036,7 +3107,8 @@ function updateStatus() {
   const meta = selectedMissionMeta();
   const sensorText = sensor ? ` | Sensor ${sensor.location} | POC ${sensor.poc || "unknown"}` : "";
   const dateText = meta.date ? ` | Date ${meta.date}${meta.time ? ` ${meta.time}` : ""}` : "";
-  elements.status.textContent = `Ready. Campaign ${campaignId} | Mission ${missionFilter === "all" ? "All" : missionFilter}${sensorText}${dateText} | TAS phase ${activePhase === "all" ? "All" : activePhase} | Frequency and strain follow TAS phase | ${counts}`;
+  const dataText = showDataOnly ? "Only traces with data" : "All traces";
+  elements.status.textContent = `Ready. Campaign ${campaignId} | Mission ${missionFilter === "all" ? "All" : missionFilter}${sensorText}${dateText} | ${dataText} | TAS phase ${activePhase === "all" ? "All" : activePhase} | Frequency and strain follow TAS phase | ${counts}`;
   elements.currentView.textContent = `Zip ${campaignId} | Mission ${missionFilter === "all" ? "All" : missionFilter}${sensor ? ` | Sensor ${sensor.location}` : ""} | Phase ${activePhase === "all" ? "All" : activePhase}`;
 }
 function renderAllCharts() {
@@ -3045,6 +3117,7 @@ function renderAllCharts() {
 function rebuildAll() {
   buildCampaignFilter();
   buildMissionFilter();
+  buildDataFilter();
   buildPhaseFilter();
   buildFrequencyChannelFilter();
   renderSensorContext();
