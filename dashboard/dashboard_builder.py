@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-17-static-dashboard-v6-sensor-location"
+BUILDER_VERSION = "2026-07-17-static-dashboard-v7-mission-filter-fix"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -1663,7 +1663,7 @@ function parseIsoDate(value) {
 function missionAllowedByDate(mission) {
   if (!dateFrom && !dateTo) return true;
   const date = parseIsoDate(missionMeta(mission.id).date_iso);
-  if (!date) return false;
+  if (!date) return true;
   if (dateFrom && date < dateFrom) return false;
   if (dateTo && date > dateTo) return false;
   return true;
@@ -1828,11 +1828,15 @@ function buildMissionFilter() {
     elements.mission.innerHTML = "";
     return;
   }
+  const query = missionSearch.trim().toLowerCase();
   const missions = (campaign.missions || []).filter((mission) => missionMatchesAllFilters(mission));
   const allSummary = `<span class="choice-button summary">
     <span>All Missions</span>
     <small>${escapeHtml(`${campaign.total_files || 0} files`)}</small>
   </span>`;
+  const emptyMessage = missions.length
+    ? ""
+    : `<div class="empty-state">No missions match these filters. Try All Sensor Locations, clear the dates, or search a different mission ID.</div>`;
   elements.mission.innerHTML = `<div class="filter-head"><span>Mission ID</span><small>${escapeHtml(query ? "Search" : "Select a mission")}</small></div>
     <div class="filter-body">
       <input id="mission-search" type="search" placeholder="Search mission ID" value="${escapeHtml(missionSearch)}">
@@ -1840,6 +1844,7 @@ function buildMissionFilter() {
         ${allSummary}
         ${missions.map((mission) => missionChoice(mission)).join("")}
       </div>
+      ${emptyMessage}
     </div>`;
   const search = document.getElementById("mission-search");
   search.addEventListener("input", () => {
