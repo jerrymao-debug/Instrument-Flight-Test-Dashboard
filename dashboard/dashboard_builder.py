@@ -1773,7 +1773,7 @@ function buildSensorFilter() {
       name: sensorTypeLabel(type),
       detail: `${allSensors.filter((sensor) => sensor.type === type).length} locations`,
     })));
-  elements.sensor.innerHTML = `<div class="filter-head"><span>Sensor Location</span><small>${escapeHtml(activeSensor ? activeSensor.location : sensorTypeLabel(sensorType))}</small></div>
+  elements.sensor.innerHTML = `<div class="filter-head"><span>Sensor Type &amp; Sensor Location</span><small>${escapeHtml(activeSensor ? activeSensor.location : sensorTypeLabel(sensorType))}</small></div>
     <div class="filter-body">
       <div class="type-row">
         ${typeOptions.map((option) => choiceButton(option, option.id === sensorType, "data-sensor-type")).join("")}
