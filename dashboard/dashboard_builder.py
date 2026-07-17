@@ -32,7 +32,8 @@ MAX_TAS_POINTS = 2500
 MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
-BUILDER_VERSION = "2026-07-12-static-dashboard-v5-mission-pages"
+SHEET_METADATA_FILE = "sensor_mission_metadata.json"
+BUILDER_VERSION = "2026-07-17-static-dashboard-v6-sensor-location"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -167,9 +168,10 @@ def list_s3_objects(s3_client, bucket: str, prefix: str) -> list[S3Object]:
     return sorted(objects, key=lambda obj: obj.key.lower())
 
 
-def source_manifest_hash(objects: list[S3Object]) -> str:
+def source_manifest_hash(objects: list[S3Object], metadata_hash: str = "") -> str:
     digest = hashlib.sha256()
     digest.update(BUILDER_VERSION.encode("utf-8"))
+    digest.update(metadata_hash.encode("utf-8"))
     for obj in objects:
         digest.update(obj.key.encode("utf-8"))
         digest.update(str(obj.size).encode("ascii"))
@@ -188,6 +190,52 @@ def get_existing_manifest(s3_client, bucket: str, prefix: str) -> dict | None:
         return json.loads(response["Body"].read().decode("utf-8"))
     except Exception:
         return None
+
+
+def metadata_signature(metadata: dict) -> str:
+    clean_metadata = copy.deepcopy(metadata)
+    clean_metadata.pop("_hash", None)
+    return hashlib.sha256(json.dumps(clean_metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def load_sheet_metadata(
+    s3_client=None,
+    bucket: str | None = None,
+    prefix: str = "",
+    metadata_path: str | None = None,
+) -> dict:
+    candidates: list[Path] = []
+    if metadata_path:
+        candidates.append(Path(metadata_path))
+    candidates.append(Path(__file__).resolve().with_name(SHEET_METADATA_FILE))
+    candidates.append(Path.cwd() / SHEET_METADATA_FILE)
+
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+                data.setdefault("sensors", [])
+                data.setdefault("missions", {})
+                data["_hash"] = metadata_signature(data)
+                print(f"Loaded sensor mission metadata: {candidate} ({len(data['sensors'])} sensors, {len(data['missions'])} missions)")
+                return data
+            except Exception as exc:
+                print(f"Warning: could not read sensor mission metadata from {candidate}: {exc}")
+
+    if s3_client and bucket:
+        key = f"{prefix}{SHEET_METADATA_FILE}"
+        try:
+            response = s3_client.get_object(Bucket=bucket, Key=key)
+            data = json.loads(response["Body"].read().decode("utf-8"))
+            data.setdefault("sensors", [])
+            data.setdefault("missions", {})
+            data["_hash"] = metadata_signature(data)
+            print(f"Loaded sensor mission metadata: s3://{bucket}/{key} ({len(data['sensors'])} sensors, {len(data['missions'])} missions)")
+            return data
+        except Exception as exc:
+            print(f"Warning: no sensor mission metadata found at s3://{bucket}/{key}: {exc}")
+
+    return {"generated": "", "sensors": [], "missions": {}, "_hash": metadata_signature({})}
 
 
 def should_include_source_object(key: str) -> bool:
@@ -986,6 +1034,7 @@ def build_dashboard_payload(
     source_prefix: str,
     mission_downloads: dict[str, dict[str, dict]] | None = None,
     source_downloads: dict[str, dict] | None = None,
+    sheet_metadata: dict | None = None,
 ) -> dict:
     campaigns = sorted(
         {
@@ -1003,6 +1052,7 @@ def build_dashboard_payload(
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "builder_version": BUILDER_VERSION,
         "kinds": KIND_ORDER,
+        "sheet_metadata": sheet_metadata or {"generated": "", "sensors": [], "missions": {}},
         "campaigns": [
             build_campaign_payload(
                 campaign,
@@ -1063,6 +1113,7 @@ def build_index_payload(payload: dict) -> dict:
         "source_s3_uri": payload["source_s3_uri"],
         "generated": payload["generated"],
         "builder_version": payload["builder_version"],
+        "sheet_metadata": payload.get("sheet_metadata", {"generated": "", "sensors": [], "missions": {}}),
         "campaigns": campaigns,
     }
 
@@ -1143,6 +1194,7 @@ def build_mission_payload(payload: dict, campaign_id: str, mission_id: str) -> d
         "generated": payload["generated"],
         "builder_version": payload["builder_version"],
         "kinds": payload["kinds"],
+        "sheet_metadata": payload.get("sheet_metadata", {"generated": "", "sensors": [], "missions": {}}),
         "page_type": "mission",
         "home_url": "../../index.html",
         "campaigns": [campaign],
@@ -1262,7 +1314,8 @@ def build_once(args: argparse.Namespace) -> int:
         print(f"Public base URL: {public_base_url}")
     objects = list_s3_objects(s3_client, source_bucket, source_prefix)
     source_objects = [obj for obj in objects if should_include_source_object(obj.key)]
-    manifest_hash = source_manifest_hash(source_objects)
+    sheet_metadata = load_sheet_metadata(s3_client, destination_bucket, destination_prefix, args.metadata)
+    manifest_hash = source_manifest_hash(source_objects, sheet_metadata.get("_hash", ""))
     existing_manifest = get_existing_manifest(s3_client, destination_bucket, destination_prefix)
     if (
         existing_manifest
@@ -1304,13 +1357,23 @@ def build_once(args: argparse.Namespace) -> int:
         source_prefix,
         mission_downloads,
         source_downloads,
+        sheet_metadata,
     )
     site_files = build_site_files(payload)
+    site_files[SHEET_METADATA_FILE] = json.dumps(
+        {key: value for key, value in sheet_metadata.items() if key != "_hash"},
+        indent=2,
+        ensure_ascii=False,
+    )
     written_files = write_site_files(site_files, output_dir)
     index_file = output_dir / "index.html"
+    mission_page_count = sum(
+        len(campaign["missions"])
+        for campaign in payload["campaigns"]
+    )
     print(
         f"Wrote local dashboard: {index_file} ({human_size(index_file.stat().st_size)}) "
-        f"and {len(written_files) - 1} mission pages"
+        f"and {mission_page_count} mission pages"
     )
 
     manifest = {
@@ -1320,6 +1383,7 @@ def build_once(args: argparse.Namespace) -> int:
         "source_file_count": len(source_objects),
         "campaigns": [campaign["id"] for campaign in payload["campaigns"]],
         "builder_version": BUILDER_VERSION,
+        "sheet_metadata_hash": sheet_metadata.get("_hash", ""),
         "generated": payload["generated"],
     }
     if args.no_upload:
@@ -1336,6 +1400,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--profile", default=None)
     parser.add_argument("--cache-dir", default=str(LOCAL_CACHE_DIR))
     parser.add_argument("--output-dir", default=str(LOCAL_BUILD_DIR))
+    parser.add_argument("--metadata", default=None, help="Optional local sensor_mission_metadata.json path.")
     parser.add_argument("--public-base-url", default=None, help="Stable public URL that serves the destination prefix, for example https://example.cloudfront.net")
     parser.add_argument("--force", action="store_true", help="Rebuild even when the source manifest has not changed.")
     parser.add_argument("--no-upload", action="store_true", help="Only write the local index.html.")
@@ -1421,6 +1486,10 @@ input { min-height: 32px; padding: 0 9px; }
 }
 .filter-body { min-width: 0; display: grid; gap: 7px; }
 .button-row { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 1px; }
+.type-row { display: flex; gap: 7px; overflow-x: auto; }
+.date-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.date-field { display: grid; gap: 3px; min-width: 160px; }
+.date-field label { color: #475569; font-size: 10px; font-weight: 700; }
 .mission-choice {
   display: flex;
   gap: 6px;
@@ -1520,6 +1589,8 @@ input { min-height: 32px; padding: 0 9px; }
     </header>
     <div id="status-line" class="status-line">Starting...</div>
     <div id="campaign-filter" class="filter-block"></div>
+    <div id="sensor-filter" class="filter-block"></div>
+    <div id="date-filter" class="filter-block"></div>
     <div id="mission-filter" class="filter-block"></div>
   </main>
   <script id="index-data" type="application/json">__INDEX_DATA__</script>
@@ -1528,12 +1599,19 @@ const payload = JSON.parse(document.getElementById("index-data").textContent);
 const KINDS = ["TAS", "ERS", "FDS", "PSD", "STRAIN"];
 let campaignId = payload.campaigns[0]?.id || "";
 let missionSearch = "";
+let sensorType = "all";
+let sensorSearch = "";
+let sensorId = "all";
+let dateFrom = "";
+let dateTo = "";
 const elements = {
   status: document.getElementById("status-line"),
   currentView: document.getElementById("current-view"),
   s3: document.getElementById("s3-source"),
   generated: document.getElementById("generated"),
   campaign: document.getElementById("campaign-filter"),
+  sensor: document.getElementById("sensor-filter"),
+  date: document.getElementById("date-filter"),
   mission: document.getElementById("mission-filter"),
 };
 function escapeHtml(value) {
@@ -1547,6 +1625,62 @@ function escapeHtml(value) {
 function currentCampaign() {
   return payload.campaigns.find((item) => item.id === campaignId) || payload.campaigns[0];
 }
+function sheetMetadata() {
+  return payload.sheet_metadata || { sensors: [], missions: {} };
+}
+function normalizeToken(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+function sensorCampaign(sensor) {
+  const match = String(sensor.config || "").match(/zip\s*(\d+)/i);
+  return match ? match[1] : sensor.campaign || "";
+}
+function sensorsForCampaign() {
+  const sensors = sheetMetadata().sensors || [];
+  return sensors.filter((sensor) => {
+    const campaign = sensorCampaign(sensor);
+    return !campaign || campaign === campaignId;
+  });
+}
+function selectedSensor() {
+  if (sensorId === "all") return null;
+  return sensorsForCampaign().find((sensor) => sensor.id === sensorId) || null;
+}
+function sensorTypeLabel(type) {
+  if (type === "accelerometer") return "Accelerometer";
+  if (type === "strain gauge") return "Strain Gauge";
+  return "All Sensors";
+}
+function missionMeta(missionId) {
+  return (sheetMetadata().missions || {})[missionId] || {};
+}
+function sameConfig(left, right) {
+  return normalizeToken(left) === normalizeToken(right);
+}
+function parseIsoDate(value) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(String(value || "")) ? String(value) : "";
+}
+function missionAllowedByDate(mission) {
+  if (!dateFrom && !dateTo) return true;
+  const date = parseIsoDate(missionMeta(mission.id).date_iso);
+  if (!date) return false;
+  if (dateFrom && date < dateFrom) return false;
+  if (dateTo && date > dateTo) return false;
+  return true;
+}
+function missionAllowedBySensor(mission) {
+  const sensor = selectedSensor();
+  if (!sensor) return true;
+  const meta = missionMeta(mission.id);
+  return meta.config && sameConfig(meta.config, sensor.config);
+}
+function missionMatchesAllFilters(mission) {
+  const query = missionSearch.trim().toLowerCase();
+  const meta = missionMeta(mission.id);
+  const sensor = selectedSensor();
+  const searchText = `${mission.name} ${mission.id} ${meta.config || ""} ${meta.date || ""} ${meta.time || ""} ${meta.mission_type || ""} ${sensor?.poc || ""}`.toLowerCase();
+  return (!query || searchText.includes(query)) && missionAllowedBySensor(mission) && missionAllowedByDate(mission);
+}
 function groupDetail(groups) {
   return `TAS ${groups.TAS || 0} | ERS ${groups.ERS || 0} | FDS ${groups.FDS || 0} | PSD ${groups.PSD || 0} | Strain ${groups.STRAIN || 0}`;
 }
@@ -1558,9 +1692,15 @@ function choiceButton(option, active, attr) {
 }
 function missionChoice(mission) {
   const detail = groupDetail(mission.groups || {});
-  const link = `<a class="choice-button" href="${escapeHtml(mission.page_url)}" title="Open ${escapeHtml(mission.name)} dashboard">
+  const meta = missionMeta(mission.id);
+  const sensor = selectedSensor();
+  const params = new URLSearchParams();
+  if (sensor) params.set("sensor", sensor.id);
+  const href = `${mission.page_url}${params.toString() ? `?${params.toString()}` : ""}`;
+  const subDetail = [detail, meta.date || "", meta.time || "", sensor?.poc ? `POC ${sensor.poc}` : ""].filter(Boolean).join(" | ");
+  const link = `<a class="choice-button" href="${escapeHtml(href)}" title="Open ${escapeHtml(mission.name)} dashboard">
     <span>${escapeHtml(mission.name)}</span>
-    <small>${escapeHtml(detail)}</small>
+    <small>${escapeHtml(subDetail)}</small>
   </a>`;
   const download = mission.download_url
     ? `<a class="download-button" href="${escapeHtml(mission.download_url)}" target="_blank" rel="noopener" download title="Download ${escapeHtml(mission.name)} mission files from AWS">
@@ -1589,8 +1729,97 @@ function buildCampaignFilter() {
     button.addEventListener("click", () => {
       campaignId = button.dataset.campaign;
       missionSearch = "";
+      sensorType = "all";
+      sensorSearch = "";
+      sensorId = "all";
+      dateFrom = "";
+      dateTo = "";
       rebuild();
     });
+  });
+}
+function buildSensorFilter() {
+  const allSensors = sensorsForCampaign();
+  const availableTypes = Array.from(new Set(allSensors.map((sensor) => sensor.type).filter(Boolean))).sort();
+  const query = sensorSearch.trim().toLowerCase();
+  const filteredSensors = allSensors.filter((sensor) => {
+    if (sensorType !== "all" && sensor.type !== sensorType) return false;
+    const text = `${sensor.location} ${sensor.type} ${sensor.config} ${sensor.poc || ""}`.toLowerCase();
+    return !query || text.includes(query);
+  });
+  if (sensorId !== "all" && !allSensors.some((sensor) => sensor.id === sensorId)) sensorId = "all";
+  const activeSensor = selectedSensor();
+  const typeOptions = [{ id: "all", name: "All Sensors", detail: `${allSensors.length} locations` }]
+    .concat(availableTypes.map((type) => ({
+      id: type,
+      name: sensorTypeLabel(type),
+      detail: `${allSensors.filter((sensor) => sensor.type === type).length} locations`,
+    })));
+  elements.sensor.innerHTML = `<div class="filter-head"><span>Sensor Location</span><small>${escapeHtml(activeSensor ? activeSensor.location : sensorTypeLabel(sensorType))}</small></div>
+    <div class="filter-body">
+      <div class="type-row">
+        ${typeOptions.map((option) => choiceButton(option, option.id === sensorType, "data-sensor-type")).join("")}
+      </div>
+      <input id="sensor-search" type="search" placeholder="Search sensor location or POC" value="${escapeHtml(sensorSearch)}">
+      <div class="button-row">
+        ${choiceButton({ id: "all", name: "All Sensor Locations", detail: "Do not filter missions by sensor config" }, sensorId === "all", "data-sensor")}
+        ${filteredSensors.map((sensor) => choiceButton({
+          id: sensor.id,
+          name: sensor.location,
+          detail: `${sensorTypeLabel(sensor.type)} | ${sensor.poc || "POC unknown"} | ${sensor.config || ""}`,
+        }, sensor.id === sensorId, "data-sensor")).join("")}
+      </div>
+    </div>`;
+  elements.sensor.querySelectorAll("[data-sensor-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      sensorType = button.dataset.sensorType;
+      sensorId = "all";
+      buildSensorFilter();
+      buildMissionFilter();
+      updateStatus();
+    });
+  });
+  const search = document.getElementById("sensor-search");
+  search.addEventListener("input", () => {
+    sensorSearch = search.value;
+    buildSensorFilter();
+  });
+  elements.sensor.querySelectorAll("[data-sensor]").forEach((button) => {
+    button.addEventListener("click", () => {
+      sensorId = button.dataset.sensor;
+      buildSensorFilter();
+      buildMissionFilter();
+      updateStatus();
+    });
+  });
+}
+function buildDateFilter() {
+  elements.date.innerHTML = `<div class="filter-head"><span>Mission Date</span><small>${escapeHtml(dateFrom || dateTo ? "Filtered" : "All dates")}</small></div>
+    <div class="filter-body">
+      <div class="date-row">
+        <div class="date-field"><label for="date-from">From</label><input id="date-from" type="date" value="${escapeHtml(dateFrom)}"></div>
+        <div class="date-field"><label for="date-to">To</label><input id="date-to" type="date" value="${escapeHtml(dateTo)}"></div>
+        <button class="choice-button" type="button" id="clear-date"><span>Clear Dates</span><small>Show every mission date</small></button>
+      </div>
+    </div>`;
+  document.getElementById("date-from").addEventListener("input", (event) => {
+    dateFrom = event.target.value;
+    buildDateFilter();
+    buildMissionFilter();
+    updateStatus();
+  });
+  document.getElementById("date-to").addEventListener("input", (event) => {
+    dateTo = event.target.value;
+    buildDateFilter();
+    buildMissionFilter();
+    updateStatus();
+  });
+  document.getElementById("clear-date").addEventListener("click", () => {
+    dateFrom = "";
+    dateTo = "";
+    buildDateFilter();
+    buildMissionFilter();
+    updateStatus();
   });
 }
 function buildMissionFilter() {
@@ -1599,8 +1828,7 @@ function buildMissionFilter() {
     elements.mission.innerHTML = "";
     return;
   }
-  const query = missionSearch.trim().toLowerCase();
-  const missions = (campaign.missions || []).filter((mission) => !query || `${mission.name} ${mission.id}`.toLowerCase().includes(query));
+  const missions = (campaign.missions || []).filter((mission) => missionMatchesAllFilters(mission));
   const allSummary = `<span class="choice-button summary">
     <span>All Missions</span>
     <small>${escapeHtml(`${campaign.total_files || 0} files`)}</small>
@@ -1623,17 +1851,19 @@ function buildMissionFilter() {
 function updateStatus() {
   const campaign = currentCampaign();
   const missionCount = campaign?.missions?.length || 0;
-  const matchCount = campaign ? (campaign.missions || []).filter((mission) => {
-    const query = missionSearch.trim().toLowerCase();
-    return !query || `${mission.name} ${mission.id}`.toLowerCase().includes(query);
-  }).length : 0;
+  const matchCount = campaign ? (campaign.missions || []).filter((mission) => missionMatchesAllFilters(mission)).length : 0;
+  const sensor = selectedSensor();
+  const sensorText = sensor ? ` | Sensor ${sensor.location}` : "";
+  const dateText = dateFrom || dateTo ? ` | Date ${dateFrom || "..."} to ${dateTo || "..."}` : "";
   elements.status.textContent = campaign
-    ? `Ready. Zip ${campaign.id} has ${missionCount} missions. ${matchCount} mission${matchCount === 1 ? "" : "s"} shown.`
+    ? `Ready. Zip ${campaign.id} has ${missionCount} missions. ${matchCount} mission${matchCount === 1 ? "" : "s"} shown${sensorText}${dateText}.`
     : "No campaign data found.";
-  elements.currentView.textContent = campaign ? `Zip ${campaign.id} | Select a mission` : "No campaign selected";
+  elements.currentView.textContent = campaign ? `Zip ${campaign.id}${sensorText} | Select a mission` : "No campaign selected";
 }
 function rebuild() {
   buildCampaignFilter();
+  buildSensorFilter();
+  buildDateFilter();
   buildMissionFilter();
   updateStatus();
 }
@@ -2000,6 +2230,23 @@ input { min-height: 32px; padding: 0 9px; }
   padding: 0 10px 8px;
 }
 .warning-item { margin-top: 3px; }
+.sensor-context {
+  display: none;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 10px;
+  border: 1px solid #c7d2e4;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 9px;
+  color: #334155;
+}
+.sensor-context.visible { display: grid; }
+.sensor-context strong {
+  display: block;
+  color: #111827;
+  font-size: 11px;
+}
 @media (max-width: 900px) {
   main { padding: 14px 10px 26px; }
   .page-head { display: grid; }
@@ -2024,6 +2271,7 @@ input { min-height: 32px; padding: 0 9px; }
       </div>
     </header>
     <div id="status-line" class="status-line">Starting...</div>
+    <div id="sensor-context" class="sensor-context"></div>
     <div id="campaign-filter" class="filter-block mission-page-hidden"></div>
     <div id="mission-filter" class="filter-block mission-page-hidden"></div>
     <div id="phase-filter" class="filter-block"></div>
@@ -2044,11 +2292,13 @@ const KINDS = payload.kinds;
 const palette = ["#111827", "#2563eb", "#c2410c", "#0f766e", "#7c3aed", "#be123c", "#4d7c0f", "#0369a1"];
 const frequencyTickVals = [10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000];
 const frequencyTickText = ["10","2","3","4","5","6","7","8","9","100","2","3","4","5","6","7","8","9","1000"];
+const queryParams = new URLSearchParams(window.location.search);
 let campaignId = payload.campaigns[0]?.id || "all";
 let missionFilter = "all";
 let missionSearch = "";
 let activePhase = "all";
 let frequencyChannel = "all";
+let selectedSensorId = queryParams.get("sensor") || "all";
 let strainScale = 1;
 const state = Object.fromEntries(KINDS.map((kind) => [kind, "all"]));
 const visibleState = Object.fromEntries(KINDS.map((kind) => [kind, new Set(["all"])]));
@@ -2059,6 +2309,7 @@ const elements = {
   currentView: document.getElementById("current-view"),
   s3: document.getElementById("s3-source"),
   generated: document.getElementById("generated"),
+  sensorContext: document.getElementById("sensor-context"),
   campaign: document.getElementById("campaign-filter"),
   mission: document.getElementById("mission-filter"),
   phase: document.getElementById("phase-filter"),
@@ -2077,6 +2328,57 @@ function escapeHtml(value) {
 }
 function currentCampaign() {
   return payload.campaigns.find((item) => item.id === campaignId) || payload.campaigns[0];
+}
+function sheetMetadata() {
+  return payload.sheet_metadata || { sensors: [], missions: {} };
+}
+function normalizeToken(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+function selectedSensor() {
+  if (selectedSensorId === "all") return null;
+  return (sheetMetadata().sensors || []).find((sensor) => sensor.id === selectedSensorId) || null;
+}
+function selectedMissionMeta() {
+  return (sheetMetadata().missions || {})[missionFilter] || {};
+}
+function sensorTypeLabel(type) {
+  if (type === "accelerometer") return "Accelerometer";
+  if (type === "strain gauge") return "Strain Gauge";
+  return "Sensor";
+}
+function sensorAliases(sensor) {
+  const values = new Set([sensor.location, ...(sensor.aliases || [])]);
+  const location = String(sensor.location || "");
+  values.add(location.replace(/^ch\d+\s+/i, ""));
+  values.add(location.replace(/[-\s]+/g, "_"));
+  return Array.from(values).map(normalizeToken).filter(Boolean);
+}
+function traceMatchesSelectedSensor(kind, trace) {
+  const sensor = selectedSensor();
+  if (!sensor || kind === "TAS") return true;
+  if (sensor.type === "strain gauge" && kind !== "STRAIN") return false;
+  if (sensor.type === "accelerometer" && kind === "STRAIN") return false;
+  const channel = normalizeToken(trace.channel || "");
+  const exactChannels = (sensor.exact_channels || []).map(normalizeToken).filter(Boolean);
+  if (exactChannels.length && exactChannels.includes(channel)) return true;
+  const haystack = normalizeToken(`${trace.channel || ""} ${trace.name || ""}`);
+  return sensorAliases(sensor).some((alias) => channel === alias || haystack.includes(alias));
+}
+function renderSensorContext() {
+  const sensor = selectedSensor();
+  if (!sensor) {
+    elements.sensorContext.classList.remove("visible");
+    elements.sensorContext.innerHTML = "";
+    return;
+  }
+  const meta = selectedMissionMeta();
+  elements.sensorContext.classList.add("visible");
+  elements.sensorContext.innerHTML = `
+    <div><strong>Selected Sensor</strong>${escapeHtml(sensor.location || "")}</div>
+    <div><strong>Sensor Type</strong>${escapeHtml(sensorTypeLabel(sensor.type))}</div>
+    <div><strong>Reach Out To</strong>${escapeHtml(sensor.poc || "POC not listed")}</div>
+    <div><strong>Mission Date</strong>${escapeHtml([meta.date, meta.time].filter(Boolean).join(" ") || "Date not listed")}</div>`;
 }
 function emptyCounts() {
   return Object.fromEntries(KINDS.map((kind) => [kind, 0]));
@@ -2100,6 +2402,7 @@ function selectorsFor(kind) {
   return (campaign.groups[kind].selectors || []).filter((record) => missionMatches(record) && (record.type === "all" || phaseMatches(kind, record)));
 }
 function traceAllowedForKind(kind, trace) {
+  if (!traceMatchesSelectedSensor(kind, trace)) return false;
   return kind === "TAS" || kind === "STRAIN" || traceMatchesChannel(trace);
 }
 function traceOptionId(record, traceIndex) {
@@ -2328,6 +2631,7 @@ function channelOptionsForScope() {
     for (const record of recordsFor(kind)) {
       const parsed = campaign.series[record.id];
       for (const trace of parsed?.traces || []) {
+        if (!traceMatchesSelectedSensor(kind, trace)) continue;
         const id = `exact:${trace.channel}`;
         if (!channels.has(id)) {
           const found = (campaign.channels || []).find((item) => item.id === id);
@@ -2632,16 +2936,21 @@ function renderChart(kind) {
   updateSectionCount(kind);
 }
 function buildSections() {
-  elements.sections.innerHTML = KINDS.map((kind) => sectionHtml(kind)).join("");
-  for (const kind of KINDS) {
+  const visibleKinds = KINDS.filter((kind) => kind === "TAS" || selectionOptionsFor(kind).some((item) => item.type !== "all"));
+  elements.sections.innerHTML = visibleKinds.map((kind) => sectionHtml(kind)).join("");
+  for (const kind of visibleKinds) {
     renderFileList(kind);
     document.getElementById(`${kind}-search`).addEventListener("input", () => renderFileList(kind));
   }
 }
 function updateStatus() {
   const counts = KINDS.map((kind) => `${kind}: ${selectionOptionsFor(kind).filter((item) => item.type !== "all").length}`).join(" | ");
-  elements.status.textContent = `Ready. Campaign ${campaignId} | Mission ${missionFilter === "all" ? "All" : missionFilter} | TAS phase ${activePhase === "all" ? "All" : activePhase} | Frequency and strain follow TAS phase | ${counts}`;
-  elements.currentView.textContent = `Zip ${campaignId} | Mission ${missionFilter === "all" ? "All" : missionFilter} | Phase ${activePhase === "all" ? "All" : activePhase}`;
+  const sensor = selectedSensor();
+  const meta = selectedMissionMeta();
+  const sensorText = sensor ? ` | Sensor ${sensor.location} | POC ${sensor.poc || "unknown"}` : "";
+  const dateText = meta.date ? ` | Date ${meta.date}${meta.time ? ` ${meta.time}` : ""}` : "";
+  elements.status.textContent = `Ready. Campaign ${campaignId} | Mission ${missionFilter === "all" ? "All" : missionFilter}${sensorText}${dateText} | TAS phase ${activePhase === "all" ? "All" : activePhase} | Frequency and strain follow TAS phase | ${counts}`;
+  elements.currentView.textContent = `Zip ${campaignId} | Mission ${missionFilter === "all" ? "All" : missionFilter}${sensor ? ` | Sensor ${sensor.location}` : ""} | Phase ${activePhase === "all" ? "All" : activePhase}`;
 }
 function renderAllCharts() {
   for (const kind of KINDS) renderChart(kind);
@@ -2651,6 +2960,7 @@ function rebuildAll() {
   buildMissionFilter();
   buildPhaseFilter();
   buildFrequencyChannelFilter();
+  renderSensorContext();
   buildSections();
   renderAllCharts();
   updateStatus();
