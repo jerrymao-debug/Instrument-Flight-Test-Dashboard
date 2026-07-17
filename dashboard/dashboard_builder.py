@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-17-static-dashboard-v7-mission-filter-fix"
+BUILDER_VERSION = "2026-07-17-static-dashboard-v8-mission-type-filter"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -1591,6 +1591,7 @@ input { min-height: 32px; padding: 0 9px; }
     <div id="campaign-filter" class="filter-block"></div>
     <div id="sensor-filter" class="filter-block"></div>
     <div id="date-filter" class="filter-block"></div>
+    <div id="mission-type-filter" class="filter-block"></div>
     <div id="mission-filter" class="filter-block"></div>
   </main>
   <script id="index-data" type="application/json">__INDEX_DATA__</script>
@@ -1604,6 +1605,7 @@ let sensorSearch = "";
 let sensorId = "all";
 let dateFrom = "";
 let dateTo = "";
+let missionType = "all";
 const elements = {
   status: document.getElementById("status-line"),
   currentView: document.getElementById("current-view"),
@@ -1612,6 +1614,7 @@ const elements = {
   campaign: document.getElementById("campaign-filter"),
   sensor: document.getElementById("sensor-filter"),
   date: document.getElementById("date-filter"),
+  missionType: document.getElementById("mission-type-filter"),
   mission: document.getElementById("mission-filter"),
 };
 function escapeHtml(value) {
@@ -1654,6 +1657,13 @@ function sensorTypeLabel(type) {
 function missionMeta(missionId) {
   return (sheetMetadata().missions || {})[missionId] || {};
 }
+function missionTypeKey(value) {
+  const text = String(value || "").trim();
+  return text ? text : "__missing__";
+}
+function missionTypeLabelFromKey(key) {
+  return key === "__missing__" ? "Mission type not listed" : key;
+}
 function sameConfig(left, right) {
   return normalizeToken(left) === normalizeToken(right);
 }
@@ -1674,12 +1684,19 @@ function missionAllowedBySensor(mission) {
   const meta = missionMeta(mission.id);
   return meta.config && sameConfig(meta.config, sensor.config);
 }
+function missionAllowedByType(mission) {
+  if (missionType === "all") return true;
+  return missionTypeKey(missionMeta(mission.id).mission_type) === missionType;
+}
+function missionMatchesTypeSourceFilters(mission) {
+  return missionAllowedBySensor(mission) && missionAllowedByDate(mission);
+}
 function missionMatchesAllFilters(mission) {
   const query = missionSearch.trim().toLowerCase();
   const meta = missionMeta(mission.id);
   const sensor = selectedSensor();
   const searchText = `${mission.name} ${mission.id} ${meta.config || ""} ${meta.date || ""} ${meta.time || ""} ${meta.mission_type || ""} ${sensor?.poc || ""}`.toLowerCase();
-  return (!query || searchText.includes(query)) && missionAllowedBySensor(mission) && missionAllowedByDate(mission);
+  return (!query || searchText.includes(query)) && missionMatchesTypeSourceFilters(mission) && missionAllowedByType(mission);
 }
 function groupDetail(groups) {
   return `TAS ${groups.TAS || 0} | ERS ${groups.ERS || 0} | FDS ${groups.FDS || 0} | PSD ${groups.PSD || 0} | Strain ${groups.STRAIN || 0}`;
@@ -1697,7 +1714,7 @@ function missionChoice(mission) {
   const params = new URLSearchParams();
   if (sensor) params.set("sensor", sensor.id);
   const href = `${mission.page_url}${params.toString() ? `?${params.toString()}` : ""}`;
-  const subDetail = [detail, meta.date || "", meta.time || "", sensor?.poc ? `POC ${sensor.poc}` : ""].filter(Boolean).join(" | ");
+  const subDetail = [detail, meta.mission_type || "", meta.date || "", meta.time || "", sensor?.poc ? `POC ${sensor.poc}` : ""].filter(Boolean).join(" | ");
   const link = `<a class="choice-button" href="${escapeHtml(href)}" title="Open ${escapeHtml(mission.name)} dashboard">
     <span>${escapeHtml(mission.name)}</span>
     <small>${escapeHtml(subDetail)}</small>
@@ -1734,6 +1751,7 @@ function buildCampaignFilter() {
       sensorId = "all";
       dateFrom = "";
       dateTo = "";
+      missionType = "all";
       rebuild();
     });
   });
@@ -1775,6 +1793,7 @@ function buildSensorFilter() {
       sensorType = button.dataset.sensorType;
       sensorId = "all";
       buildSensorFilter();
+      buildMissionTypeFilter();
       buildMissionFilter();
       updateStatus();
     });
@@ -1788,6 +1807,7 @@ function buildSensorFilter() {
     button.addEventListener("click", () => {
       sensorId = button.dataset.sensor;
       buildSensorFilter();
+      buildMissionTypeFilter();
       buildMissionFilter();
       updateStatus();
     });
@@ -1805,12 +1825,14 @@ function buildDateFilter() {
   document.getElementById("date-from").addEventListener("input", (event) => {
     dateFrom = event.target.value;
     buildDateFilter();
+    buildMissionTypeFilter();
     buildMissionFilter();
     updateStatus();
   });
   document.getElementById("date-to").addEventListener("input", (event) => {
     dateTo = event.target.value;
     buildDateFilter();
+    buildMissionTypeFilter();
     buildMissionFilter();
     updateStatus();
   });
@@ -1818,8 +1840,48 @@ function buildDateFilter() {
     dateFrom = "";
     dateTo = "";
     buildDateFilter();
+    buildMissionTypeFilter();
     buildMissionFilter();
     updateStatus();
+  });
+}
+function buildMissionTypeFilter() {
+  const campaign = currentCampaign();
+  if (!campaign) {
+    elements.missionType.innerHTML = "";
+    return;
+  }
+  const sourceMissions = (campaign.missions || []).filter((mission) => missionMatchesTypeSourceFilters(mission));
+  const typeCounts = new Map();
+  sourceMissions.forEach((mission) => {
+    const key = missionTypeKey(missionMeta(mission.id).mission_type);
+    const item = typeCounts.get(key) || { id: key, name: missionTypeLabelFromKey(key), count: 0 };
+    item.count += 1;
+    typeCounts.set(key, item);
+  });
+  const options = Array.from(typeCounts.values());
+  if (missionType !== "all" && !options.some((option) => option.id === missionType)) {
+    missionType = "all";
+  }
+  const active = missionType === "all" ? "All Types" : missionTypeLabelFromKey(missionType);
+  const emptyMessage = sourceMissions.length
+    ? ""
+    : `<div class="empty-state">No mission types match the selected zip, sensor, and date filters.</div>`;
+  elements.missionType.innerHTML = `<div class="filter-head"><span>Mission Type</span><small>${escapeHtml(active)}</small></div>
+    <div class="filter-body">
+      <div class="button-row">
+        ${choiceButton({ id: "all", name: "All Mission Types", detail: `${sourceMissions.length} missions` }, missionType === "all", "data-mission-type")}
+        ${options.map((option) => choiceButton({ id: option.id, name: option.name, detail: `${option.count} mission${option.count === 1 ? "" : "s"}` }, option.id === missionType, "data-mission-type")).join("")}
+      </div>
+      ${emptyMessage}
+    </div>`;
+  elements.missionType.querySelectorAll("[data-mission-type]").forEach((button) => {
+    button.addEventListener("click", () => {
+      missionType = button.dataset.missionType;
+      buildMissionTypeFilter();
+      buildMissionFilter();
+      updateStatus();
+    });
   });
 }
 function buildMissionFilter() {
@@ -1836,7 +1898,7 @@ function buildMissionFilter() {
   </span>`;
   const emptyMessage = missions.length
     ? ""
-    : `<div class="empty-state">No missions match these filters. Try All Sensor Locations, clear the dates, or search a different mission ID.</div>`;
+    : `<div class="empty-state">No missions match these filters. Try All Sensor Locations, All Mission Types, clear the dates, or search a different mission ID.</div>`;
   elements.mission.innerHTML = `<div class="filter-head"><span>Mission ID</span><small>${escapeHtml(query ? "Search" : "Select a mission")}</small></div>
     <div class="filter-body">
       <input id="mission-search" type="search" placeholder="Search mission ID" value="${escapeHtml(missionSearch)}">
@@ -1860,15 +1922,17 @@ function updateStatus() {
   const sensor = selectedSensor();
   const sensorText = sensor ? ` | Sensor ${sensor.location}` : "";
   const dateText = dateFrom || dateTo ? ` | Date ${dateFrom || "..."} to ${dateTo || "..."}` : "";
+  const typeText = missionType !== "all" ? ` | Type ${missionTypeLabelFromKey(missionType)}` : "";
   elements.status.textContent = campaign
-    ? `Ready. Zip ${campaign.id} has ${missionCount} missions. ${matchCount} mission${matchCount === 1 ? "" : "s"} shown${sensorText}${dateText}.`
+    ? `Ready. Zip ${campaign.id} has ${missionCount} missions. ${matchCount} mission${matchCount === 1 ? "" : "s"} shown${sensorText}${dateText}${typeText}.`
     : "No campaign data found.";
-  elements.currentView.textContent = campaign ? `Zip ${campaign.id}${sensorText} | Select a mission` : "No campaign selected";
+  elements.currentView.textContent = campaign ? `Zip ${campaign.id}${sensorText}${typeText} | Select a mission` : "No campaign selected";
 }
 function rebuild() {
   buildCampaignFilter();
   buildSensorFilter();
   buildDateFilter();
+  buildMissionTypeFilter();
   buildMissionFilter();
   updateStatus();
 }
