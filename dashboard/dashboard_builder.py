@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-17-static-dashboard-v8-mission-type-filter"
+BUILDER_VERSION = "2026-07-17-static-dashboard-v9-mission-type-detail"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2301,7 +2301,7 @@ input { min-height: 32px; padding: 0 9px; }
 .warning-item { margin-top: 3px; }
 .sensor-context {
   display: none;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
   margin: 0 0 10px;
   border: 1px solid #c7d2e4;
@@ -2447,6 +2447,7 @@ function renderSensorContext() {
     <div><strong>Selected Sensor</strong>${escapeHtml(sensor.location || "")}</div>
     <div><strong>Sensor Type</strong>${escapeHtml(sensorTypeLabel(sensor.type))}</div>
     <div><strong>Reach Out To</strong>${escapeHtml(sensor.poc || "POC not listed")}</div>
+    <div><strong>Mission Type</strong>${escapeHtml(meta.mission_type || "Mission type not listed")}</div>
     <div><strong>Mission Date</strong>${escapeHtml([meta.date, meta.time].filter(Boolean).join(" ") || "Date not listed")}</div>`;
 }
 function emptyCounts() {
