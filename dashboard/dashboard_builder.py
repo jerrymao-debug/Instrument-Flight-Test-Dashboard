@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-17-static-dashboard-v9-mission-type-detail"
+BUILDER_VERSION = "2026-07-17-static-dashboard-v10-mission-context"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2404,6 +2404,9 @@ function sheetMetadata() {
 function normalizeToken(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
 }
+function sameConfig(left, right) {
+  return normalizeToken(left) === normalizeToken(right);
+}
 function selectedSensor() {
   if (selectedSensorId === "all") return null;
   return (sheetMetadata().sensors || []).find((sensor) => sensor.id === selectedSensorId) || null;
@@ -2411,10 +2414,29 @@ function selectedSensor() {
 function selectedMissionMeta() {
   return (sheetMetadata().missions || {})[missionFilter] || {};
 }
+function sensorsForSelectedMission() {
+  const meta = selectedMissionMeta();
+  const config = meta.config || "";
+  if (!config) return [];
+  return (sheetMetadata().sensors || []).filter((sensor) => sameConfig(sensor.config, config));
+}
 function sensorTypeLabel(type) {
   if (type === "accelerometer") return "Accelerometer";
   if (type === "strain gauge") return "Strain Gauge";
   return "Sensor";
+}
+function uniqueValues(values) {
+  return Array.from(new Set(values.map((value) => String(value || "").trim()).filter(Boolean)));
+}
+function missionReachOut(sensor) {
+  if (sensor) return sensor.poc || "POC not listed";
+  const pocs = uniqueValues(sensorsForSelectedMission().map((item) => item.poc)).sort();
+  return pocs.length ? pocs.join(", ") : "POC not listed";
+}
+function missionSensorTypeLabel(sensor) {
+  if (sensor) return sensorTypeLabel(sensor.type);
+  const types = uniqueValues(sensorsForSelectedMission().map((item) => sensorTypeLabel(item.type))).sort();
+  return types.length ? types.join(", ") : "All sensor types";
 }
 function sensorAliases(sensor) {
   const values = new Set([sensor.location, ...(sensor.aliases || [])]);
@@ -2436,17 +2458,12 @@ function traceMatchesSelectedSensor(kind, trace) {
 }
 function renderSensorContext() {
   const sensor = selectedSensor();
-  if (!sensor) {
-    elements.sensorContext.classList.remove("visible");
-    elements.sensorContext.innerHTML = "";
-    return;
-  }
   const meta = selectedMissionMeta();
   elements.sensorContext.classList.add("visible");
   elements.sensorContext.innerHTML = `
-    <div><strong>Selected Sensor</strong>${escapeHtml(sensor.location || "")}</div>
-    <div><strong>Sensor Type</strong>${escapeHtml(sensorTypeLabel(sensor.type))}</div>
-    <div><strong>Reach Out To</strong>${escapeHtml(sensor.poc || "POC not listed")}</div>
+    <div><strong>Selected Sensor</strong>${escapeHtml(sensor?.location || "All sensors for mission")}</div>
+    <div><strong>Sensor Type</strong>${escapeHtml(missionSensorTypeLabel(sensor))}</div>
+    <div><strong>Reach Out To</strong>${escapeHtml(missionReachOut(sensor))}</div>
     <div><strong>Mission Type</strong>${escapeHtml(meta.mission_type || "Mission type not listed")}</div>
     <div><strong>Mission Date</strong>${escapeHtml([meta.date, meta.time].filter(Boolean).join(" ") || "Date not listed")}</div>`;
 }
