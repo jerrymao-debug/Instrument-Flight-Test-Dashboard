@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v20-readable-frequency-selectors"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v21-clean-selector-labels"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2987,9 +2987,12 @@ function compactSource(name, phase) {
   if (phase && phase !== "all" && source.startsWith(`${phase}_`)) source = source.slice(phase.length + 1);
   return source.replace(/_/g, " ").trim() || String(name || "");
 }
+function stripChannelIndex(value) {
+  return String(value || "").replace(/\s*\[\d+\](?=\s*$)/, "");
+}
 function selectorPrimaryLabel(kind, option) {
   if (option.type === "all") return option.name;
-  if (option.type === "trace") return option.name;
+  if (option.type === "trace") return stripChannelIndex(option.name);
   const pieces = [];
   if (phaseScopeFor(kind) === "all" && option.phase && option.phase !== "all") pieces.push(option.phase);
   const source = compactSource(option.file_name || option.name, option.phase);
@@ -3019,8 +3022,8 @@ function renderFileList(kind) {
     const active = state[kind] === option.id ? "active" : "";
     const checked = visible.has("all") || visible.has(option.id) ? "checked" : "";
     const rowNumber = option.number || (option.type === "all" ? "All" : `#${index}`);
-    const secondary = option.type === "all" ? option.detail : option.type === "trace" ? option.channel || option.detail : option.file_name || option.name;
-    const meta = option.type === "all" ? "" : option.detail;
+    const secondary = option.type === "all" ? option.detail : option.type === "trace" ? `${option.mission} | ${option.phase}` : option.file_name || option.name;
+    const meta = option.type === "all" || option.type === "trace" ? "" : option.detail;
     const sourceName = option.source_name || option.file_name || option.name;
     const downloadControl = option.type === "all"
       ? ""
@@ -3029,7 +3032,7 @@ function renderFileList(kind) {
         : `<span class="rank-download-button disabled" title="Original file download is available after the dashboard uploads">Download</span>`;
     rows.push(`<div class="rank-row ${active}">
       <label class="rank-check"><input class="trace-toggle" type="checkbox" data-kind="${kind}" data-file="${escapeHtml(option.id)}" ${checked}></label>
-      <button class="rank-button ${active}" type="button" data-kind="${kind}" data-file="${escapeHtml(option.id)}" title="${escapeHtml(option.file_name || option.name)}">
+      <button class="rank-button ${active}" type="button" data-kind="${kind}" data-file="${escapeHtml(option.id)}" title="${escapeHtml(stripChannelIndex(option.file_name || option.name))}">
         <span class="rank-number">${escapeHtml(rowNumber)}</span>
         <span><span class="rank-label">${escapeHtml(selectorPrimaryLabel(kind, option))}</span>
         <span class="rank-full-name">${escapeHtml(secondary)}</span>
@@ -3143,12 +3146,12 @@ function traceStyle(index, selected) {
   return { color: palette[index % palette.length], width: 1.2 };
 }
 function compactLegendName(name) {
-  const parts = String(name).split(" - ");
+  const parts = stripChannelIndex(name).split(" - ");
   let source = parts.shift() || "";
   const channel = parts.join(" - ");
   source = source.replace(/^.*?_TSfilt_/, "").replace(/_(ERS|FDS|SRS|PSD|PSD_STRAIN)$/i, "").replace(/TAS$/i, "");
   const detail = source.replace(/_/g, " ").trim();
-  return [detail, channel].filter(Boolean).join(" | ") || name;
+  return [detail, channel].filter(Boolean).join(" | ") || stripChannelIndex(name);
 }
 function plotlyTraces(kind, traces) {
   const selected = traces.length === 1;
@@ -3160,7 +3163,7 @@ function plotlyTraces(kind, traces) {
     name: compactLegendName(trace.name),
     line: traceStyle(index, selected),
     opacity: selected ? 1 : 0.72,
-    hovertemplate: `${escapeHtml(trace.name)}<br>%{x:.6g}<br>%{y:.6g}<extra></extra>`,
+    hovertemplate: `${escapeHtml(stripChannelIndex(trace.name))}<br>%{x:.6g}<br>%{y:.6g}<extra></extra>`,
     showlegend: selected || traces.length <= 24,
   }));
 }
