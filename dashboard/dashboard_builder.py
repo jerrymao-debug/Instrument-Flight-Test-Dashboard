@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v18-strain-psd-label"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v19-horizontal-frequency-selectors"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2291,6 +2291,69 @@ input { min-height: 32px; padding: 0 9px; }
 }
 .plot-wrap { min-width: 0; }
 .plotly-chart { width: 100%; height: 4.6in; }
+.frequency-section .comparison-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.frequency-section .rank-panel {
+  display: grid;
+  grid-template-columns: 160px minmax(170px, 260px) 176px minmax(0, 1fr);
+  align-items: stretch;
+}
+.frequency-section .rank-head {
+  border-right: 1px solid #d6dce8;
+  border-bottom: 0;
+}
+.frequency-section .search-input {
+  min-height: 100%;
+  border-right: 1px solid #d6dce8;
+  border-bottom: 0;
+}
+.frequency-section .rank-tools {
+  border-right: 1px solid #d6dce8;
+  border-bottom: 0;
+}
+.frequency-section .rank-list {
+  display: flex;
+  min-width: 0;
+  max-height: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.frequency-section .rank-row {
+  flex: 0 0 282px;
+  width: 282px;
+  min-height: 78px;
+  border-right: 1px solid #e3e8f2;
+  border-bottom: 0;
+}
+.frequency-section .rank-row.active {
+  box-shadow: inset 0 3px 0 #111827;
+}
+.frequency-section .rank-check,
+.frequency-section .rank-check-spacer {
+  align-items: center;
+  min-height: 78px;
+  padding-top: 0;
+}
+.frequency-section .rank-button {
+  min-height: 78px;
+}
+.frequency-section .rank-label {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+.frequency-section .rank-full-name,
+.frequency-section .rank-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.frequency-section .rank-download-cell {
+  align-items: center;
+  padding: 7px 7px 7px 0;
+}
 .warning-list {
   display: none;
   margin-top: 8px;
@@ -2356,7 +2419,15 @@ input { min-height: 32px; padding: 0 9px; }
   .filter-head { border-right: 0; border-bottom: 1px solid #d6dce8; }
   .sensor-group-title { font-size: 22px; }
   .comparison-grid { grid-template-columns: 1fr; }
+  .frequency-section .rank-panel { grid-template-columns: 1fr; }
+  .frequency-section .rank-head,
+  .frequency-section .search-input,
+  .frequency-section .rank-tools {
+    border-right: 0;
+    border-bottom: 1px solid #d6dce8;
+  }
   .rank-list { max-height: 240px; }
+  .frequency-section .rank-list { max-height: none; }
 }
   </style>
 </head>
@@ -2678,9 +2749,10 @@ function displayKindLabel(kind) {
 function sectionHtml(kind) {
   const group = currentCampaign().groups[kind];
   const label = displayKindLabel(kind);
+  const sectionClass = kind === "TAS" ? "" : " frequency-section";
   const selectorCount = selectionOptionsFor(kind).filter((item) => item.type !== "all").length;
   return `
-    <section class="comparison-section" id="${kind}-section">
+    <section class="comparison-section${sectionClass}" id="${kind}-section">
       <div class="section-title-row">
         <h2 class="section-title">${escapeHtml(group.title)}</h2>
         <span class="section-count" id="${kind}-count">${selectorCount} selections</span>
