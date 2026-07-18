@@ -14,6 +14,7 @@ OUTPUTS = [
     ("HistogramOutput1 (Copy 2)", "_ERS", ".xmh", "nCodeXmlHistogram"),
     ("HistogramOutput1 (Copy 3)", "_PSD", ".xmh", "nCodeXmlHistogram"),
     ("HistogramOutput1 (Copy 4)", "_PSD_Strain", ".xmh", "nCodeXmlHistogram"),
+    ("HistogramOutput1 (Copy 5)", "_SRS", ".xmh", "nCodeXmlHistogram"),
 ]
 
 WORK_DIR = PSD_OUTPUT_DIR / "_flowproc_work"
@@ -411,7 +412,7 @@ def main() -> int:
     if args.overwrite:
         removed = clean_outputs()
         if removed:
-            print(f"Cleaned old FDS/ERS/PSD output file(s): {removed}")
+            print(f"Cleaned old FDS/ERS/PSD/SRS output file(s): {removed}")
     moved = organize_existing_outputs()
     if moved:
         print(f"Organized existing output file(s) into flight-phase folders: {moved}")

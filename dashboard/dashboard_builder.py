@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-17-static-dashboard-v12-search-focus"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v14-srs-layout"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -71,6 +71,13 @@ KIND_CONFIG = {
         "x_axis_type": "log",
         "y_axis_type": "log",
     },
+    "SRS": {
+        "title": "SRS Frequency Display",
+        "x_title": "Frequency (Hz)",
+        "y_title": "Shock Response Acceleration (g)",
+        "x_axis_type": "log",
+        "y_axis_type": "log",
+    },
     "PSD": {
         "title": "PSD Frequency Display",
         "x_title": "Frequency (Hz)",
@@ -86,7 +93,7 @@ KIND_CONFIG = {
         "y_axis_type": "log",
     },
 }
-KIND_ORDER = ["TAS", "ERS", "FDS", "PSD", "STRAIN"]
+KIND_ORDER = ["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN"]
 
 
 @dataclass(frozen=True)
@@ -355,6 +362,8 @@ def kind_from_name(value: str) -> str | None:
         return "ERS"
     if "_FDS" in upper:
         return "FDS"
+    if "_SRS" in upper:
+        return "SRS"
     if "_PSD" in upper:
         return "PSD"
     return None
@@ -1597,7 +1606,7 @@ input { min-height: 32px; padding: 0 9px; }
   <script id="index-data" type="application/json">__INDEX_DATA__</script>
   <script>
 const payload = JSON.parse(document.getElementById("index-data").textContent);
-const KINDS = ["TAS", "ERS", "FDS", "PSD", "STRAIN"];
+const KINDS = ["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN"];
 let campaignId = payload.campaigns[0]?.id || "";
 let missionSearch = "";
 let sensorType = "all";
@@ -1699,7 +1708,7 @@ function missionMatchesAllFilters(mission) {
   return (!query || searchText.includes(query)) && missionMatchesTypeSourceFilters(mission) && missionAllowedByType(mission);
 }
 function groupDetail(groups) {
-  return `TAS ${groups.TAS || 0} | ERS ${groups.ERS || 0} | FDS ${groups.FDS || 0} | PSD ${groups.PSD || 0} | Strain ${groups.STRAIN || 0}`;
+  return `TAS ${groups.TAS || 0} | PSD ${groups.PSD || 0} | SRS ${groups.SRS || 0} | FDS ${groups.FDS || 0} | ERS ${groups.ERS || 0} | Strain ${groups.STRAIN || 0}`;
 }
 function choiceButton(option, active, attr) {
   return `<button class="choice-button ${active ? "active" : ""}" type="button" ${attr}="${escapeHtml(option.id)}">
@@ -2355,13 +2364,6 @@ input { min-height: 32px; padding: 0 9px; }
     <div id="data-filter" class="filter-block"></div>
     <div id="phase-filter" class="filter-block"></div>
     <div id="frequency-channel-filter" class="filter-block"></div>
-    <div class="strain-tool">
-      <label for="strain-scale">Conversion scale gauge factor</label>
-      <input id="strain-scale" type="number" step="any" value="1">
-      <div class="formula">
-        <div class="formula-equation">PSD<sub>strain (unit: Microstrain)</sub> = PSD<sub>voltage (unit: mV)</sub> * CF<sup>2</sup>; strain<sub>unit micro strain</sub> = CF * Voltage<sub>unit mV</sub></div>
-      </div>
-    </div>
     <div id="sections" class="sections"></div>
   </main>
   <script id="dashboard-data" type="application/json">__DASHBOARD_DATA__</script>
@@ -2396,7 +2398,7 @@ const elements = {
   phase: document.getElementById("phase-filter"),
   frequencyChannel: document.getElementById("frequency-channel-filter"),
   sections: document.getElementById("sections"),
-  strainScale: document.getElementById("strain-scale"),
+  strainScale: null,
 };
 
 function escapeHtml(value) {
@@ -2676,6 +2678,24 @@ function sectionHtml(kind) {
       </div>
     </section>`;
 }
+function strainToolHtml() {
+  return `<div class="strain-tool" id="strain-tool">
+    <label for="strain-scale">Conversion scale gauge factor</label>
+    <input id="strain-scale" type="number" step="any" value="${escapeHtml(strainScale)}">
+    <div class="formula">
+      <div class="formula-equation">PSD<sub>strain (unit: Microstrain)</sub> = PSD<sub>voltage (unit: mV)</sub> * CF<sup>2</sup>; strain<sub>unit micro strain</sub> = CF * Voltage<sub>unit mV</sub></div>
+    </div>
+  </div>`;
+}
+function bindStrainTool() {
+  elements.strainScale = document.getElementById("strain-scale");
+  if (!elements.strainScale) return;
+  elements.strainScale.addEventListener("input", () => {
+    const value = Number(elements.strainScale.value);
+    strainScale = Number.isFinite(value) ? value : 1;
+    renderChart("STRAIN");
+  });
+}
 function choiceButton(option, active, attr, extraClass = "") {
   return `<button class="choice-button ${extraClass} ${active ? "active" : ""}" type="button" ${attr}="${escapeHtml(option.id)}">
     <span>${escapeHtml(option.name)}</span>
@@ -2700,7 +2720,7 @@ function buildCampaignFilter() {
     <div class="filter-body"><div class="button-row">
       ${payload.campaigns.map((campaign) => {
         const counts = campaignCounts(campaign);
-        const detail = `TAS ${counts.TAS} | ERS ${counts.ERS} | FDS ${counts.FDS} | PSD ${counts.PSD} | Strain ${counts.STRAIN}`;
+        const detail = `TAS ${counts.TAS} | PSD ${counts.PSD} | SRS ${counts.SRS} | FDS ${counts.FDS} | ERS ${counts.ERS} | Strain ${counts.STRAIN}`;
         return choiceButton({ id: campaign.id, name: campaign.name, detail }, campaign.id === campaignId, "data-campaign");
       }).join("")}
     </div></div>`;
@@ -2735,7 +2755,7 @@ function buildMissionFilter() {
       <div class="button-row">
         ${filtered.map((mission) => {
           const groups = mission.groups || missionCountsFor(campaign, mission.id);
-          const detail = mission.id === "all" ? `${campaign.total_files} files` : `TAS ${groups.TAS || 0} | ERS ${groups.ERS || 0} | FDS ${groups.FDS || 0} | PSD ${groups.PSD || 0} | Strain ${groups.STRAIN || 0}`;
+          const detail = mission.id === "all" ? `${campaign.total_files} files` : `TAS ${groups.TAS || 0} | PSD ${groups.PSD || 0} | SRS ${groups.SRS || 0} | FDS ${groups.FDS || 0} | ERS ${groups.ERS || 0} | Strain ${groups.STRAIN || 0}`;
           return mission.id === "all" ? choiceButton({ id: mission.id, name: mission.name, detail }, mission.id === missionFilter, "data-mission") : missionChoice(mission, detail);
         }).join("")}
       </div>
@@ -2830,7 +2850,7 @@ function compactSource(name, phase) {
   let source = String(name || "")
     .replace(/\.(csv|xmh)$/i, "")
     .replace(/^.*?_TSfilt_/, "")
-    .replace(/_(ERS|FDS|PSD|PSD_STRAIN)$/i, "")
+    .replace(/_(ERS|FDS|SRS|PSD|PSD_STRAIN)$/i, "")
     .replace(/TAS$/i, "");
   if (phase && phase !== "all" && source.startsWith(`${phase}_`)) source = source.slice(phase.length + 1);
   return source.replace(/_/g, " ").trim() || String(name || "");
@@ -2994,7 +3014,7 @@ function compactLegendName(name) {
   const parts = String(name).split(" - ");
   let source = parts.shift() || "";
   const channel = parts.join(" - ");
-  source = source.replace(/^.*?_TSfilt_/, "").replace(/_(ERS|FDS|PSD|PSD_STRAIN)$/i, "").replace(/TAS$/i, "");
+  source = source.replace(/^.*?_TSfilt_/, "").replace(/_(ERS|FDS|SRS|PSD|PSD_STRAIN)$/i, "").replace(/TAS$/i, "");
   const detail = source.replace(/_/g, " ").trim();
   return [detail, channel].filter(Boolean).join(" | ") || name;
 }
@@ -3104,7 +3124,13 @@ function renderChart(kind) {
 }
 function buildSections() {
   const visibleKinds = KINDS.filter((kind) => kind === "TAS" || selectionOptionsFor(kind).some((item) => item.type !== "all"));
-  elements.sections.innerHTML = visibleKinds.map((kind) => sectionHtml(kind)).join("");
+  const sectionParts = [];
+  for (const kind of visibleKinds) {
+    if (kind === "STRAIN") sectionParts.push(strainToolHtml());
+    sectionParts.push(sectionHtml(kind));
+  }
+  elements.sections.innerHTML = sectionParts.join("");
+  bindStrainTool();
   for (const kind of visibleKinds) {
     renderFileList(kind);
     document.getElementById(`${kind}-search`).addEventListener("input", () => renderFileList(kind));
@@ -3139,14 +3165,9 @@ function initializeDefaults() {
   missionFilter = campaign?.missions?.[0]?.id || "all";
   activePhase = "all";
   frequencyChannel = "all";
-  strainScale = Number(elements.strainScale.value) || 1;
+  strainScale = 1;
   elements.s3.textContent = payload.source_s3_uri;
   elements.generated.textContent = payload.generated;
-  elements.strainScale.addEventListener("input", () => {
-    const value = Number(elements.strainScale.value);
-    strainScale = Number.isFinite(value) ? value : 1;
-    renderChart("STRAIN");
-  });
   rebuildAll();
 }
 initializeDefaults();
