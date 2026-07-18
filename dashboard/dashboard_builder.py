@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-17-static-dashboard-v11-data-only-filter"
+BUILDER_VERSION = "2026-07-17-static-dashboard-v12-search-focus"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -1800,8 +1800,17 @@ function buildSensorFilter() {
   });
   const search = document.getElementById("sensor-search");
   search.addEventListener("input", () => {
+    const cursorStart = search.selectionStart;
+    const cursorEnd = search.selectionEnd;
     sensorSearch = search.value;
     buildSensorFilter();
+    const nextSearch = document.getElementById("sensor-search");
+    if (nextSearch) {
+      nextSearch.focus({ preventScroll: true });
+      const start = Math.min(cursorStart ?? sensorSearch.length, sensorSearch.length);
+      const end = Math.min(cursorEnd ?? start, sensorSearch.length);
+      nextSearch.setSelectionRange(start, end);
+    }
   });
   elements.sensor.querySelectorAll("[data-sensor]").forEach((button) => {
     button.addEventListener("click", () => {
