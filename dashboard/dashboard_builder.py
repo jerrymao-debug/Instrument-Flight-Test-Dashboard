@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v22-compact-frequency-selectors"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v23-clean-frequency-cards"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2328,10 +2328,14 @@ input { min-height: 32px; padding: 0 9px; }
   border-top: 1px solid #d6dce8;
 }
 .frequency-section .rank-row {
-  flex: 0 0 420px;
-  width: 420px;
-  min-height: 76px;
-  grid-template-columns: 34px minmax(0, 1fr) 82px;
+  flex: 0 0 360px;
+  width: 360px;
+  min-height: 66px;
+  grid-template-columns: minmax(0, 1fr) 82px;
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    "card action"
+    "card toggle";
   border-right: 1px solid #e3e8f2;
   border-bottom: 0;
 }
@@ -2340,23 +2344,25 @@ input { min-height: 32px; padding: 0 9px; }
 }
 .frequency-section .rank-check,
 .frequency-section .rank-check-spacer {
-  align-items: flex-start;
-  min-height: 76px;
-  padding-top: 11px;
+  grid-area: toggle;
+  align-items: center;
+  justify-content: center;
+  min-height: auto;
+  padding: 2px 8px 6px 0;
 }
 .frequency-section .trace-toggle {
   width: 16px;
   height: 16px;
 }
 .frequency-section .rank-button {
-  min-height: 76px;
-  grid-template-columns: 56px minmax(0, 1fr);
-  gap: 8px;
+  grid-area: card;
+  min-height: 66px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
   padding: 8px 10px;
 }
 .frequency-section .rank-number {
-  font-size: 12px;
-  padding-top: 0;
+  display: none;
 }
 .frequency-section .rank-label {
   display: -webkit-box;
@@ -2378,8 +2384,9 @@ input { min-height: 32px; padding: 0 9px; }
   font-size: 10px;
 }
 .frequency-section .rank-download-cell {
+  grid-area: action;
   align-items: flex-start;
-  padding: 8px 8px 6px 0;
+  padding: 8px 8px 0 0;
 }
 .frequency-section .rank-download-button {
   width: 70px;
@@ -2997,7 +3004,7 @@ function stripChannelIndex(value) {
 }
 function selectorPrimaryLabel(kind, option) {
   if (option.type === "all") return option.name;
-  if (option.type === "trace") return stripChannelIndex(option.name);
+  if (option.type === "trace") return stripChannelIndex(option.channel || option.name);
   const pieces = [];
   if (phaseScopeFor(kind) === "all" && option.phase && option.phase !== "all") pieces.push(option.phase);
   const source = compactSource(option.file_name || option.name, option.phase);
