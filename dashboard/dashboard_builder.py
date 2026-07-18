@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v15-srs-data-filter"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v16-srs-baseline-filter"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2547,7 +2547,9 @@ function dataFilteredEntries(kind, entries) {
   const validEntries = entries.filter((entry) => traceHasFinitePoints(entry.trace) && entry.magnitude > 0);
   if (!validEntries.length) return [];
   const strongest = Math.max(...validEntries.map((entry) => entry.magnitude));
-  const threshold = strongest * 1e-8;
+  const relativeThreshold = kind === "SRS" ? strongest * 1e-2 : strongest * 1e-8;
+  const absoluteThreshold = kind === "SRS" ? 0.5 : 0;
+  const threshold = Math.max(relativeThreshold, absoluteThreshold);
   const filtered = validEntries.filter((entry) => entry.magnitude > threshold);
   return filtered.length ? filtered : validEntries;
 }
