@@ -1,126 +1,71 @@
-# Instrument Flight Test Dashboard
+Local Instrument Flight Test Dashboard
+This small Flask application hosts the published Instrument Flight Test Dashboard on this Windows computer.
 
-This repository contains the source code for the Instrument Flight Test dashboard and the nCode processing/upload helpers.
+What it does
+The Python server downloads index.html from: s3://vibration-data-daq/insturment_fly_test_dashboard_code/
+It saves a local cached copy.
+Flask/Waitress sends that copy to the browser at http://127.0.0.1:5000/.
+It refreshes the copy from AWS every 10 minutes. If AWS is temporarily unavailable, the last good copy remains available.
+AWS access stays on the server. The browser never receives AWS credentials.
 
-Current temporary public dashboard:
+Start it
+Right-click start-dashboard.ps1 and choose Run with PowerShell, or run:
 
-https://vibration-data-daq.s3.us-west-2.amazonaws.com/insturment_fly_test_dashboard_code/index.html
+PowerShell -ExecutionPolicy Bypass -File .\start-dashboard.ps1
+The script installs the required Python packages into the local .runtime folder the first time, starts the server, and opens the dashboard.
 
-For durable hosting, use CloudFront in front of the private S3 prefix. See:
+Stop the server with Ctrl+C in its PowerShell window.
 
-```text
-docs/cloudfront_private_s3.md
-```
+Install on another Windows computer
+Install Python 3.10 or newer, then clone the hosting branch and start the server:
 
-## Repository Layout
+git clone --branch flask-local-host-07.18.2026 --single-branch https://github.com/jerrymao-debug/Instrument-Flight-Test-Dashboard.git
+cd .\Instrument-Flight-Test-Dashboard\local-flask-host
+PowerShell -ExecutionPolicy Bypass -File .\start-dashboard.ps1
+If Git is not installed, download the branch as a ZIP from GitHub, extract it, open the local-flask-host folder, and run start-dashboard.ps1.
 
-- `dashboard/dashboard_builder.py` builds and uploads the static interactive dashboard from S3 source data.
-- `dashboard/databricks_dashboard_refresh.py` is the Databricks loop that refreshes the dashboard every 10 minutes.
-- `dashboard/deploy_public_dashboard.py` documents/deploys the public S3/CloudFront-style hosting path when permissions allow it.
-- `dashboard/deploy_password_protected_dashboard.py` is an optional shared-password CloudFront deployment helper.
-- `pipeline/` contains local nCode processing helpers for CSV translation, phase splitting, FDS/ERS/PSD/strain/TAS generation, and S3 upload.
+Useful endpoints
+Dashboard: http://127.0.0.1:5000/
+Server status: http://127.0.0.1:5000/api/status
+Force a refresh from this computer:
+Invoke-RestMethod -Method Post http://127.0.0.1:5000/api/refresh
+Authenticated/private S3 access
+The server first tries the AWS profile in AWS_PROFILE (default: ncode-sso). If that profile is unavailable, it uses the current public S3 HTTPS endpoint. For private S3 access, install/configure the AWS CLI and sign in before starting:
 
-## Dashboard Data Flow
-
-Source data:
-
-```text
-s3://vibration-data-daq/Instrumented fly test dashboard/
-```
-
-Published dashboard/code:
-
-```text
-s3://vibration-data-daq/insturment_fly_test_dashboard_code/
-```
-
-The dashboard builder:
-
-1. scans source `.xmh` and `TAS.csv` files,
-2. parses TAS, ERS, FDS, PSD, and strain data,
-3. builds a static `index.html`,
-4. mirrors original source files into the public dashboard prefix for permanent row-level downloads,
-5. uploads the dashboard and manifest to S3.
-
-## Local Setup
-
-```powershell
-python -m pip install -r requirements.txt
+$env:AWS_PROFILE = "ncode-sso"
 aws sso login --profile ncode-sso
-```
+.\start-dashboard.ps1
+Share over Tailscale
+The safe default is local-only at http://127.0.0.1:5000/.
 
-## Build And Upload Dashboard
+The dashboard currently running on Jerry's computer is available to other computers on the same Tailscale network at:
 
-From the repo root:
+http://100.92.170.94:5000/
+This is a private Tailscale address, not a public internet link. The hosting computer must stay powered on, connected to Tailscale, and running the Flask server.
 
-```powershell
-python .\dashboard\dashboard_builder.py --force --profile ncode-sso
-```
+To host from a different computer, first find that computer's Tailscale address:
 
-Normal refresh, only uploading when source data changed:
+tailscale ip -4
+Then start Flask on all network interfaces:
 
-```powershell
-python .\dashboard\dashboard_builder.py --profile ncode-sso
-```
+$env:DASHBOARD_HOST = "0.0.0.0"
+$env:DASHBOARD_REFRESH_TOKEN = "choose-a-long-random-secret"
+.\start-dashboard.ps1
+Other Tailscale computers can then browse to:
 
-The builder defaults to stable public links under:
+http://<hosting-computer-Tailscale-IP>:5000/
+Windows Firewall may ask you to allow Python on private networks. Do not expose port 5000 directly to the public internet.
 
-```text
-https://vibration-data-daq.s3.us-west-2.amazonaws.com/insturment_fly_test_dashboard_code
-```
+Configuration
+Environment variables can override the defaults:
 
-To override that:
-
-```powershell
-python .\dashboard\dashboard_builder.py --public-base-url "https://example.com/dashboard" --profile ncode-sso
-```
-
-## Databricks Refresh
-
-Paste or import:
-
-```text
-dashboard/databricks_dashboard_refresh.py
-```
-
-That script downloads `dashboard_builder.py` from S3 and runs it every 600 seconds.
-
-To switch Databricks output links to CloudFront after infra creates the distribution, set:
-
-```python
-import os
-os.environ["DASHBOARD_PUBLIC_BASE_URL"] = "https://<cloudfront-domain>"
-```
-
-The same value can be passed locally with `--public-base-url`.
-
-## nCode Pipeline
-
-Main local pipeline:
-
-```powershell
-cd .\pipeline
-python .\final_code.py
-```
-
-Useful options:
-
-```powershell
-python .\final_code.py --limit 1
-python .\final_code.py --skip-translate
-python .\final_code.py --skip-translate --skip-split
-python .\final_code.py --overwrite
-```
-
-Upload processed results to S3:
-
-```powershell
-python .\upload_to_aws.py --profile ncode-sso
-```
-
-## Notes
-
-- Do not commit generated dashboards, caches, logs, presigned URLs, or credential files.
-- The current raw S3 public access is scoped to `insturment_fly_test_dashboard_code/*`, but it can be reset by bucket security automation.
-- The durable hosting path is CloudFront with private S3; see `docs/cloudfront_private_s3.md`.
-- The optional password-protected CloudFront deployment requires additional CloudFront IAM permissions.
+DASHBOARD_S3_BUCKET
+DASHBOARD_S3_PREFIX
+DASHBOARD_PUBLIC_BASE_URL
+DASHBOARD_REFRESH_SECONDS
+DASHBOARD_HOST
+DASHBOARD_PORT
+DASHBOARD_REFRESH_TOKEN
+AWS_PROFILE
+AWS_REGION
+Source project: https://github.com/jerrymao-debug/Instrument-Flight-Test-Dashboard/tree/Instrument-Flight-Test-Dashboard-07.18.2026
