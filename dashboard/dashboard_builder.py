@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v16-srs-baseline-filter"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v17-sensor-section-headers"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2138,6 +2138,21 @@ input { min-height: 32px; padding: 0 9px; }
   color: #0f172a;
   font-weight: 700;
 }
+.sensor-group-header {
+  border: 1px solid #cfd7e6;
+  border-left: 6px solid #0f766e;
+  border-radius: 6px;
+  background: #ffffff;
+  padding: 14px 16px;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.05);
+}
+.sensor-group-title {
+  margin: 0;
+  color: #0f172a;
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1.1;
+}
 .sections { display: grid; gap: 14px; }
 .comparison-section {
   background: #fff;
@@ -2339,6 +2354,7 @@ input { min-height: 32px; padding: 0 9px; }
   .page-head { display: grid; }
   .filter-block, .strain-tool { grid-template-columns: 1fr; }
   .filter-head { border-right: 0; border-bottom: 1px solid #d6dce8; }
+  .sensor-group-title { font-size: 22px; }
   .comparison-grid { grid-template-columns: 1fr; }
   .rank-list { max-height: 240px; }
 }
@@ -2680,6 +2696,9 @@ function sectionHtml(kind) {
         </div>
       </div>
     </section>`;
+}
+function sensorGroupHeaderHtml(title) {
+  return `<div class="sensor-group-header"><h2 class="sensor-group-title">${escapeHtml(title)}</h2></div>`;
 }
 function strainToolHtml() {
   return `<div class="strain-tool" id="strain-tool">
@@ -3128,8 +3147,17 @@ function renderChart(kind) {
 function buildSections() {
   const visibleKinds = KINDS.filter((kind) => kind === "TAS" || selectionOptionsFor(kind).some((item) => item.type !== "all"));
   const sectionParts = [];
+  const accelerometerKinds = new Set(["PSD", "SRS", "FDS", "ERS"]);
+  let addedAccelerometerHeader = false;
   for (const kind of visibleKinds) {
-    if (kind === "STRAIN") sectionParts.push(strainToolHtml());
+    if (accelerometerKinds.has(kind) && !addedAccelerometerHeader) {
+      sectionParts.push(sensorGroupHeaderHtml("Accelerometer"));
+      addedAccelerometerHeader = true;
+    }
+    if (kind === "STRAIN") {
+      sectionParts.push(sensorGroupHeaderHtml("Strain Gauge"));
+      sectionParts.push(strainToolHtml());
+    }
     sectionParts.push(sectionHtml(kind));
   }
   elements.sections.innerHTML = sectionParts.join("");
