@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v14-srs-layout"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v15-srs-data-filter"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2370,6 +2370,7 @@ input { min-height: 32px; padding: 0 9px; }
   <script>
 const payload = JSON.parse(document.getElementById("dashboard-data").textContent);
 const KINDS = payload.kinds;
+const DATA_FILTERABLE_KINDS = new Set(["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN"]);
 const palette = ["#111827", "#2563eb", "#c2410c", "#0f766e", "#7c3aed", "#be123c", "#4d7c0f", "#0369a1"];
 const frequencyTickVals = [10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000];
 const frequencyTickText = ["10","2","3","4","5","6","7","8","9","100","2","3","4","5","6","7","8","9","1000"];
@@ -2541,8 +2542,8 @@ function baseTraceEntriesFor(kind, includeChannelFilter = true) {
   }
   return entries;
 }
-function dataFilteredEntries(entries) {
-  if (!showDataOnly) return entries;
+function dataFilteredEntries(kind, entries) {
+  if (!showDataOnly || !DATA_FILTERABLE_KINDS.has(kind)) return entries;
   const validEntries = entries.filter((entry) => traceHasFinitePoints(entry.trace) && entry.magnitude > 0);
   if (!validEntries.length) return [];
   const strongest = Math.max(...validEntries.map((entry) => entry.magnitude));
@@ -2551,10 +2552,10 @@ function dataFilteredEntries(entries) {
   return filtered.length ? filtered : validEntries;
 }
 function traceEntriesFor(kind) {
-  return dataFilteredEntries(baseTraceEntriesFor(kind, true));
+  return dataFilteredEntries(kind, baseTraceEntriesFor(kind, true));
 }
 function channelTraceEntriesFor(kind) {
-  return dataFilteredEntries(baseTraceEntriesFor(kind, false));
+  return dataFilteredEntries(kind, baseTraceEntriesFor(kind, false));
 }
 function recordsWithDataFor(kind) {
   if (!showDataOnly) return recordsFor(kind);
