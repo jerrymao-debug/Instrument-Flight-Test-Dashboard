@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v19-horizontal-frequency-selectors"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v20-readable-frequency-selectors"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2296,33 +2296,42 @@ input { min-height: 32px; padding: 0 9px; }
 }
 .frequency-section .rank-panel {
   display: grid;
-  grid-template-columns: 160px minmax(170px, 260px) 176px minmax(0, 1fr);
+  grid-template-columns: 180px minmax(280px, 1fr) 210px;
+  grid-template-areas:
+    "head search tools"
+    "list list list";
   align-items: stretch;
 }
 .frequency-section .rank-head {
+  grid-area: head;
   border-right: 1px solid #d6dce8;
   border-bottom: 0;
 }
 .frequency-section .search-input {
+  grid-area: search;
   min-height: 100%;
   border-right: 1px solid #d6dce8;
   border-bottom: 0;
 }
 .frequency-section .rank-tools {
+  grid-area: tools;
   border-right: 1px solid #d6dce8;
   border-bottom: 0;
 }
 .frequency-section .rank-list {
+  grid-area: list;
   display: flex;
   min-width: 0;
   max-height: none;
   overflow-x: auto;
   overflow-y: hidden;
+  border-top: 1px solid #d6dce8;
 }
 .frequency-section .rank-row {
-  flex: 0 0 282px;
-  width: 282px;
-  min-height: 78px;
+  flex: 0 0 420px;
+  width: 420px;
+  min-height: 112px;
+  grid-template-columns: 34px minmax(0, 1fr) 82px;
   border-right: 1px solid #e3e8f2;
   border-bottom: 0;
 }
@@ -2331,28 +2340,45 @@ input { min-height: 32px; padding: 0 9px; }
 }
 .frequency-section .rank-check,
 .frequency-section .rank-check-spacer {
-  align-items: center;
-  min-height: 78px;
-  padding-top: 0;
+  align-items: flex-start;
+  min-height: 112px;
+  padding-top: 14px;
+}
+.frequency-section .trace-toggle {
+  width: 16px;
+  height: 16px;
 }
 .frequency-section .rank-button {
-  min-height: 78px;
+  min-height: 112px;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 9px;
+  padding: 10px 12px;
+}
+.frequency-section .rank-number {
+  font-size: 12px;
+  padding-top: 0;
 }
 .frequency-section .rank-label {
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
+  font-size: 13px;
 }
 .frequency-section .rank-full-name,
 .frequency-section .rank-value {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  line-height: 1.3;
 }
 .frequency-section .rank-download-cell {
-  align-items: center;
-  padding: 7px 7px 7px 0;
+  align-items: flex-start;
+  padding: 10px 8px 7px 0;
+}
+.frequency-section .rank-download-button {
+  width: 72px;
+  min-height: 28px;
 }
 .warning-list {
   display: none;
@@ -2419,7 +2445,14 @@ input { min-height: 32px; padding: 0 9px; }
   .filter-head { border-right: 0; border-bottom: 1px solid #d6dce8; }
   .sensor-group-title { font-size: 22px; }
   .comparison-grid { grid-template-columns: 1fr; }
-  .frequency-section .rank-panel { grid-template-columns: 1fr; }
+  .frequency-section .rank-panel {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "head"
+      "search"
+      "tools"
+      "list";
+  }
   .frequency-section .rank-head,
   .frequency-section .search-input,
   .frequency-section .rank-tools {
