@@ -58,7 +58,23 @@ aws sso login --profile ncode-sso
 
 ## Share over Tailscale
 
-The safe default is local-only. To let another computer on your Tailscale network connect, start it with:
+The safe default is local-only at `http://127.0.0.1:5000/`.
+
+The dashboard currently running on Jerry's computer is available to other computers on the same Tailscale network at:
+
+```text
+http://100.92.170.94:5000/
+```
+
+This is a private Tailscale address, not a public internet link. The hosting computer must stay powered on, connected to Tailscale, and running the Flask server.
+
+To host from a different computer, first find that computer's Tailscale address:
+
+```powershell
+tailscale ip -4
+```
+
+Then start Flask on all network interfaces:
 
 ```powershell
 $env:DASHBOARD_HOST = "0.0.0.0"
@@ -66,7 +82,13 @@ $env:DASHBOARD_REFRESH_TOKEN = "choose-a-long-random-secret"
 .\start-dashboard.ps1
 ```
 
-Then browse to `http://<this-computer-Tailscale-IP>:5000/`. Windows Firewall may ask you to allow Python on private networks. Do not expose port 5000 directly to the public internet.
+Other Tailscale computers can then browse to:
+
+```text
+http://<hosting-computer-Tailscale-IP>:5000/
+```
+
+Windows Firewall may ask you to allow Python on private networks. Do not expose port 5000 directly to the public internet.
 
 ## Configuration
 
