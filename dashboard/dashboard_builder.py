@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v17-sensor-section-headers"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v18-strain-psd-label"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -86,7 +86,7 @@ KIND_CONFIG = {
         "y_axis_type": "log",
     },
     "STRAIN": {
-        "title": "Strain Frequency Display",
+        "title": "Strain PSD Display",
         "x_title": "Frequency (Hz)",
         "y_title": "PSD (microstrain^2/Hz)",
         "x_axis_type": "log",
@@ -2581,7 +2581,8 @@ function recordsWithDataFor(kind) {
   return recordsFor(kind).filter((record) => recordIds.has(record.id));
 }
 function traceSelectorOptionsFor(kind) {
-  const options = [{ id: "all", type: "all", number: "All", name: `${kind} (All)`, detail: "Show matching graph lines", phase: "all", mission: "all" }];
+  const label = displayKindLabel(kind);
+  const options = [{ id: "all", type: "all", number: "All", name: `${label} (All)`, detail: "Show matching graph lines", phase: "all", mission: "all" }];
   let graphNumber = 1;
   for (const entry of traceEntriesFor(kind)) {
     const { record, trace, traceIndex, id } = entry;
@@ -2671,8 +2672,12 @@ function visibleStrainPhaseSummary() {
   const phases = strainPhaseSummariesForMission();
   return activePhase === "all" ? `${phases.length} strain phases` : `${activePhase} strain phase`;
 }
+function displayKindLabel(kind) {
+  return kind === "STRAIN" ? "PSD" : kind;
+}
 function sectionHtml(kind) {
   const group = currentCampaign().groups[kind];
+  const label = displayKindLabel(kind);
   const selectorCount = selectionOptionsFor(kind).filter((item) => item.type !== "all").length;
   return `
     <section class="comparison-section" id="${kind}-section">
@@ -2682,8 +2687,8 @@ function sectionHtml(kind) {
       </div>
       <div class="comparison-grid">
         <aside class="rank-panel">
-          <div class="rank-head"><span>${kind} Selections</span><span>${selectorCount}</span></div>
-          <input class="search-input" id="${kind}-search" type="search" placeholder="Filter ${kind}">
+          <div class="rank-head"><span>${label} Selections</span><span>${selectorCount}</span></div>
+          <input class="search-input" id="${kind}-search" type="search" placeholder="Filter ${label}">
           <div class="rank-tools">
             <button type="button" id="${kind}-show-all">Show All</button>
             <button type="button" id="${kind}-hide-all">Hide All</button>
