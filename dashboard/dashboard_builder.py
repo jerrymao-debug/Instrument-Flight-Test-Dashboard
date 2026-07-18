@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v21-clean-selector-labels"
+BUILDER_VERSION = "2026-07-18-static-dashboard-v22-compact-frequency-selectors"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -2330,7 +2330,7 @@ input { min-height: 32px; padding: 0 9px; }
 .frequency-section .rank-row {
   flex: 0 0 420px;
   width: 420px;
-  min-height: 112px;
+  min-height: 76px;
   grid-template-columns: 34px minmax(0, 1fr) 82px;
   border-right: 1px solid #e3e8f2;
   border-bottom: 0;
@@ -2341,18 +2341,18 @@ input { min-height: 32px; padding: 0 9px; }
 .frequency-section .rank-check,
 .frequency-section .rank-check-spacer {
   align-items: flex-start;
-  min-height: 112px;
-  padding-top: 14px;
+  min-height: 76px;
+  padding-top: 11px;
 }
 .frequency-section .trace-toggle {
   width: 16px;
   height: 16px;
 }
 .frequency-section .rank-button {
-  min-height: 112px;
-  grid-template-columns: 58px minmax(0, 1fr);
-  gap: 9px;
-  padding: 10px 12px;
+  min-height: 76px;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 8px;
+  padding: 8px 10px;
 }
 .frequency-section .rank-number {
   font-size: 12px;
@@ -2362,23 +2362,28 @@ input { min-height: 32px; padding: 0 9px; }
   display: -webkit-box;
   overflow: hidden;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  font-size: 13px;
+  -webkit-line-clamp: 2;
+  font-size: 12px;
+  line-height: 1.2;
 }
 .frequency-section .rank-full-name,
 .frequency-section .rank-value {
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
-  line-height: 1.3;
+  line-height: 1.2;
+}
+.frequency-section .rank-full-name {
+  margin-top: 2px;
+  font-size: 10px;
 }
 .frequency-section .rank-download-cell {
   align-items: flex-start;
-  padding: 10px 8px 7px 0;
+  padding: 8px 8px 6px 0;
 }
 .frequency-section .rank-download-button {
-  width: 72px;
-  min-height: 28px;
+  width: 70px;
+  min-height: 25px;
 }
 .warning-list {
   display: none;
