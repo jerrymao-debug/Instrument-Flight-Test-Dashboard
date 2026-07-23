@@ -33,7 +33,7 @@ MAX_Y_COLUMNS = 12
 MAX_XMH_CHANNELS = 96
 MISSION_DOWNLOAD_EXPIRES_SECONDS = 604800
 SHEET_METADATA_FILE = "sensor_mission_metadata.json"
-BUILDER_VERSION = "2026-07-18-static-dashboard-v23-clean-frequency-cards"
+BUILDER_VERSION = "2026-07-23-static-dashboard-v24-strain-srs"
 
 FLOAT_RE = re.compile(r"[-+]?(?:(?:\d+\.\d*)|(?:\.\d+)|(?:\d+))(?:[eE][-+]?\d+)?")
 PHASE_BOUNDARY_RE = re.compile(
@@ -92,8 +92,16 @@ KIND_CONFIG = {
         "x_axis_type": "log",
         "y_axis_type": "log",
     },
+    "STRAIN_SRS": {
+        "title": "Strain SRS Display",
+        "x_title": "Frequency (Hz)",
+        "y_title": "SRS (microstrain)",
+        "x_axis_type": "log",
+        "y_axis_type": "log",
+    },
 }
-KIND_ORDER = ["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN"]
+KIND_ORDER = ["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN", "STRAIN_SRS"]
+STRAIN_KINDS = {"STRAIN", "STRAIN_SRS"}
 
 
 @dataclass(frozen=True)
@@ -354,6 +362,8 @@ def mission_id_from_name(value: str) -> str:
 
 def kind_from_name(value: str) -> str | None:
     upper = value.upper()
+    if "_SRS_STRAIN" in upper:
+        return "STRAIN_SRS"
     if "_PSD_STRAIN" in upper:
         return "STRAIN"
     if upper.endswith("TAS.CSV") or "TAS.CSV" in upper:
@@ -657,6 +667,9 @@ def parse_xmh_histogram(path: Path, file_id: str, kind: str) -> dict:
         if kind == "STRAIN":
             y_title = "PSD"
             y_units = "microstrain^2/Hz"
+        elif kind == "STRAIN_SRS":
+            y_title = "SRS"
+            y_units = "microstrain"
         x_label = f"{x_title} ({x_units})" if x_units else x_title
         y_label = f"{y_title} ({y_units})" if y_units else y_title
         point_count = min(len(x_values), len(y_values))
@@ -842,7 +855,7 @@ def build_campaign_payload(
         mission_stat["file_count"] += 1
         mission_stat["groups"][kind] += 1
 
-        if kind not in {"TAS", "STRAIN"}:
+        if kind != "TAS" and kind not in STRAIN_KINDS:
             for trace in parsed["traces"]:
                 channel = trace.get("channel") or ""
                 key = normalize_match_text(channel)
@@ -1162,7 +1175,7 @@ def build_mission_payload(payload: dict, campaign_id: str, mission_id: str) -> d
             phase_stat["file_count"] += 1
             phase_stat["groups"][kind] += 1
 
-            if kind not in {"TAS", "STRAIN"}:
+            if kind != "TAS" and kind not in STRAIN_KINDS:
                 parsed = source_campaign["series"].get(record["id"], {})
                 for trace in parsed.get("traces", []):
                     channel = trace.get("channel") or ""
@@ -1606,7 +1619,7 @@ input { min-height: 32px; padding: 0 9px; }
   <script id="index-data" type="application/json">__INDEX_DATA__</script>
   <script>
 const payload = JSON.parse(document.getElementById("index-data").textContent);
-const KINDS = ["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN"];
+const KINDS = ["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN", "STRAIN_SRS"];
 let campaignId = payload.campaigns[0]?.id || "";
 let missionSearch = "";
 let sensorType = "all";
@@ -1708,7 +1721,7 @@ function missionMatchesAllFilters(mission) {
   return (!query || searchText.includes(query)) && missionMatchesTypeSourceFilters(mission) && missionAllowedByType(mission);
 }
 function groupDetail(groups) {
-  return `TAS ${groups.TAS || 0} | PSD ${groups.PSD || 0} | SRS ${groups.SRS || 0} | FDS ${groups.FDS || 0} | ERS ${groups.ERS || 0} | Strain ${groups.STRAIN || 0}`;
+  return `TAS ${groups.TAS || 0} | PSD ${groups.PSD || 0} | SRS ${groups.SRS || 0} | FDS ${groups.FDS || 0} | ERS ${groups.ERS || 0} | Strain PSD ${groups.STRAIN || 0} | Strain SRS ${groups.STRAIN_SRS || 0}`;
 }
 function choiceButton(option, active, attr) {
   return `<button class="choice-button ${active ? "active" : ""}" type="button" ${attr}="${escapeHtml(option.id)}">
@@ -2502,7 +2515,8 @@ input { min-height: 32px; padding: 0 9px; }
   <script>
 const payload = JSON.parse(document.getElementById("dashboard-data").textContent);
 const KINDS = payload.kinds;
-const DATA_FILTERABLE_KINDS = new Set(["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN"]);
+const DATA_FILTERABLE_KINDS = new Set(["TAS", "PSD", "SRS", "FDS", "ERS", "STRAIN", "STRAIN_SRS"]);
+const STRAIN_KINDS = new Set(["STRAIN", "STRAIN_SRS"]);
 const palette = ["#111827", "#2563eb", "#c2410c", "#0f766e", "#7c3aed", "#be123c", "#4d7c0f", "#0369a1"];
 const frequencyTickVals = [10,20,30,40,50,60,70,80,90,100,200,300,400,500,600,700,800,900,1000];
 const frequencyTickText = ["10","2","3","4","5","6","7","8","9","100","2","3","4","5","6","7","8","9","1000"];
@@ -2595,8 +2609,8 @@ function sensorAliases(sensor) {
 function traceMatchesSelectedSensor(kind, trace) {
   const sensor = selectedSensor();
   if (!sensor || kind === "TAS") return true;
-  if (sensor.type === "strain gauge" && kind !== "STRAIN") return false;
-  if (sensor.type === "accelerometer" && kind === "STRAIN") return false;
+  if (sensor.type === "strain gauge" && !STRAIN_KINDS.has(kind)) return false;
+  if (sensor.type === "accelerometer" && STRAIN_KINDS.has(kind)) return false;
   const channel = normalizeToken(trace.channel || "");
   const exactChannels = (sensor.exact_channels || []).map(normalizeToken).filter(Boolean);
   if (exactChannels.length && exactChannels.includes(channel)) return true;
@@ -2653,7 +2667,7 @@ function traceHasFinitePoints(trace) {
 }
 function traceAllowedForKind(kind, trace) {
   if (!traceMatchesSelectedSensor(kind, trace)) return false;
-  return kind === "TAS" || kind === "STRAIN" || traceMatchesChannel(trace);
+  return kind === "TAS" || STRAIN_KINDS.has(kind) || traceMatchesChannel(trace);
 }
 function traceOptionId(record, traceIndex) {
   return `${record.id}::trace::${traceIndex}`;
@@ -2679,7 +2693,7 @@ function dataFilteredEntries(kind, entries) {
   const validEntries = entries.filter((entry) => traceHasFinitePoints(entry.trace) && entry.magnitude > 0);
   if (!validEntries.length) return [];
   const strongest = Math.max(...validEntries.map((entry) => entry.magnitude));
-  const relativeThreshold = kind === "SRS" ? strongest * 1e-2 : strongest * 1e-8;
+  const relativeThreshold = (kind === "SRS" || kind === "STRAIN_SRS") ? strongest * 1e-2 : strongest * 1e-8;
   const absoluteThreshold = kind === "SRS" ? 0.5 : 0;
   const threshold = Math.max(relativeThreshold, absoluteThreshold);
   const filtered = validEntries.filter((entry) => entry.magnitude > threshold);
@@ -2780,7 +2794,7 @@ function phaseFileCount() {
 }
 function strainPhaseSummariesForMission() {
   return phaseSummariesForMission().filter((phase) => {
-    if ((phase.groups?.STRAIN || 0) === 0) return false;
+    if (((phase.groups?.STRAIN || 0) + (phase.groups?.STRAIN_SRS || 0)) === 0) return false;
     return activePhase === "all" || phase.id === activePhase;
   });
 }
@@ -2789,7 +2803,9 @@ function visibleStrainPhaseSummary() {
   return activePhase === "all" ? `${phases.length} strain phases` : `${activePhase} strain phase`;
 }
 function displayKindLabel(kind) {
-  return kind === "STRAIN" ? "PSD" : kind;
+  if (kind === "STRAIN") return "PSD";
+  if (kind === "STRAIN_SRS") return "SRS";
+  return kind;
 }
 function sectionHtml(kind) {
   const group = currentCampaign().groups[kind];
@@ -2827,7 +2843,7 @@ function strainToolHtml() {
     <label for="strain-scale">Conversion scale gauge factor</label>
     <input id="strain-scale" type="number" step="any" value="${escapeHtml(strainScale)}">
     <div class="formula">
-      <div class="formula-equation">PSD<sub>strain (unit: Microstrain)</sub> = PSD<sub>voltage (unit: mV)</sub> * CF<sup>2</sup>; strain<sub>unit micro strain</sub> = CF * Voltage<sub>unit mV</sub></div>
+      <div class="formula-equation">PSD<sub>strain (unit: Microstrain)</sub> = PSD<sub>voltage (unit: mV)</sub> * CF<sup>2</sup>; SRS<sub>strain (unit: Microstrain)</sub> = SRS<sub>voltage (unit: mV)</sub> * CF; strain<sub>unit micro strain</sub> = CF * Voltage<sub>unit mV</sub></div>
     </div>
   </div>`;
 }
@@ -2837,7 +2853,7 @@ function bindStrainTool() {
   elements.strainScale.addEventListener("input", () => {
     const value = Number(elements.strainScale.value);
     strainScale = Number.isFinite(value) ? value : 1;
-    renderChart("STRAIN");
+    for (const kind of ["STRAIN", "STRAIN_SRS"]) renderChart(kind);
   });
 }
 function choiceButton(option, active, attr, extraClass = "") {
@@ -2864,7 +2880,7 @@ function buildCampaignFilter() {
     <div class="filter-body"><div class="button-row">
       ${payload.campaigns.map((campaign) => {
         const counts = campaignCounts(campaign);
-        const detail = `TAS ${counts.TAS} | PSD ${counts.PSD} | SRS ${counts.SRS} | FDS ${counts.FDS} | ERS ${counts.ERS} | Strain ${counts.STRAIN}`;
+        const detail = `TAS ${counts.TAS} | PSD ${counts.PSD} | SRS ${counts.SRS} | FDS ${counts.FDS} | ERS ${counts.ERS} | Strain PSD ${counts.STRAIN} | Strain SRS ${counts.STRAIN_SRS}`;
         return choiceButton({ id: campaign.id, name: campaign.name, detail }, campaign.id === campaignId, "data-campaign");
       }).join("")}
     </div></div>`;
@@ -2899,7 +2915,7 @@ function buildMissionFilter() {
       <div class="button-row">
         ${filtered.map((mission) => {
           const groups = mission.groups || missionCountsFor(campaign, mission.id);
-          const detail = mission.id === "all" ? `${campaign.total_files} files` : `TAS ${groups.TAS || 0} | PSD ${groups.PSD || 0} | SRS ${groups.SRS || 0} | FDS ${groups.FDS || 0} | ERS ${groups.ERS || 0} | Strain ${groups.STRAIN || 0}`;
+          const detail = mission.id === "all" ? `${campaign.total_files} files` : `TAS ${groups.TAS || 0} | PSD ${groups.PSD || 0} | SRS ${groups.SRS || 0} | FDS ${groups.FDS || 0} | ERS ${groups.ERS || 0} | Strain PSD ${groups.STRAIN || 0} | Strain SRS ${groups.STRAIN_SRS || 0}`;
           return mission.id === "all" ? choiceButton({ id: mission.id, name: mission.name, detail }, mission.id === missionFilter, "data-mission") : missionChoice(mission, detail);
         }).join("")}
       </div>
@@ -2957,7 +2973,7 @@ function channelOptionsForScope() {
   for (const option of campaign.channels || []) {
     if (option.id === "all") channels.set(option.id, option);
   }
-  for (const kind of KINDS.filter((item) => item !== "TAS" && item !== "STRAIN")) {
+  for (const kind of KINDS.filter((item) => item !== "TAS" && !STRAIN_KINDS.has(item))) {
     for (const entry of channelTraceEntriesFor(kind)) {
       const trace = entry.trace;
       const id = `exact:${trace.channel}`;
@@ -2980,9 +2996,9 @@ function buildFrequencyChannelFilter() {
   elements.frequencyChannel.querySelectorAll("[data-frequency-channel]").forEach((button) => {
     button.addEventListener("click", () => {
       frequencyChannel = button.dataset.frequencyChannel;
-      resetSelections(KINDS.filter((item) => item !== "TAS" && item !== "STRAIN"));
+      resetSelections(KINDS.filter((item) => item !== "TAS" && !STRAIN_KINDS.has(item)));
       buildFrequencyChannelFilter();
-      for (const kind of KINDS.filter((item) => item !== "TAS" && item !== "STRAIN")) {
+      for (const kind of KINDS.filter((item) => item !== "TAS" && !STRAIN_KINDS.has(item))) {
         renderFileList(kind);
         renderChart(kind);
       }
@@ -2994,7 +3010,7 @@ function compactSource(name, phase) {
   let source = String(name || "")
     .replace(/\.(csv|xmh)$/i, "")
     .replace(/^.*?_TSfilt_/, "")
-    .replace(/_(ERS|FDS|SRS|PSD|PSD_STRAIN)$/i, "")
+    .replace(/_(ERS|FDS|SRS|PSD|SRS_STRAIN|PSD_STRAIN)$/i, "")
     .replace(/TAS$/i, "");
   if (phase && phase !== "all" && source.startsWith(`${phase}_`)) source = source.slice(phase.length + 1);
   return source.replace(/_/g, " ").trim() || String(name || "");
@@ -3009,7 +3025,7 @@ function selectorPrimaryLabel(kind, option) {
   if (phaseScopeFor(kind) === "all" && option.phase && option.phase !== "all") pieces.push(option.phase);
   const source = compactSource(option.file_name || option.name, option.phase);
   if (source) pieces.push(source);
-  if (kind !== "TAS" && kind !== "STRAIN" && frequencyChannel !== "all") {
+  if (kind !== "TAS" && !STRAIN_KINDS.has(kind) && frequencyChannel !== "all") {
     const channel = channelOptionsForScope().find((item) => item.id === frequencyChannel);
     if (channel) pieces.push(channel.detail);
   }
@@ -3130,6 +3146,8 @@ function tracesFor(kind) {
       if (kind === "STRAIN") {
         const scaleSquared = strainScale * strainScale;
         traces.push({ ...trace, y: trace.y.map((value) => value * scaleSquared), y_label: "PSD (microstrain^2/Hz)" });
+      } else if (kind === "STRAIN_SRS") {
+        traces.push({ ...trace, y: trace.y.map((value) => value * strainScale), y_label: "SRS (microstrain)" });
       } else {
         traces.push(trace);
       }
@@ -3161,7 +3179,7 @@ function compactLegendName(name) {
   const parts = stripChannelIndex(name).split(" - ");
   let source = parts.shift() || "";
   const channel = parts.join(" - ");
-  source = source.replace(/^.*?_TSfilt_/, "").replace(/_(ERS|FDS|SRS|PSD|PSD_STRAIN)$/i, "").replace(/TAS$/i, "");
+  source = source.replace(/^.*?_TSfilt_/, "").replace(/_(ERS|FDS|SRS|PSD|SRS_STRAIN|PSD_STRAIN)$/i, "").replace(/TAS$/i, "");
   const detail = source.replace(/_/g, " ").trim();
   return [detail, channel].filter(Boolean).join(" | ") || stripChannelIndex(name);
 }
@@ -3185,7 +3203,7 @@ function layoutFor(kind, traces) {
   const isFrequency = kind !== "TAS";
   const useSideLegend = traces.length > 1 && window.innerWidth >= 1180;
   const xTitle = traces[0]?.x_label || group.x_title;
-  const yTitle = kind === "STRAIN" ? "PSD (microstrain^2/Hz)" : (traces[0]?.y_label || group.y_title);
+  const yTitle = kind === "STRAIN" ? "PSD (microstrain^2/Hz)" : kind === "STRAIN_SRS" ? "SRS (microstrain)" : (traces[0]?.y_label || group.y_title);
   const titleParts = [group.title, activePhase === "all" ? "All Phases" : activePhase];
   if (missionFilter !== "all") titleParts.push(missionFilter);
   const xaxis = {
@@ -3274,14 +3292,16 @@ function buildSections() {
   const sectionParts = [];
   const accelerometerKinds = new Set(["PSD", "SRS", "FDS", "ERS"]);
   let addedAccelerometerHeader = false;
+  let addedStrainHeader = false;
   for (const kind of visibleKinds) {
     if (accelerometerKinds.has(kind) && !addedAccelerometerHeader) {
       sectionParts.push(sensorGroupHeaderHtml("Accelerometer"));
       addedAccelerometerHeader = true;
     }
-    if (kind === "STRAIN") {
+    if (STRAIN_KINDS.has(kind) && !addedStrainHeader) {
       sectionParts.push(sensorGroupHeaderHtml("Strain Gauge"));
       sectionParts.push(strainToolHtml());
+      addedStrainHeader = true;
     }
     sectionParts.push(sectionHtml(kind));
   }

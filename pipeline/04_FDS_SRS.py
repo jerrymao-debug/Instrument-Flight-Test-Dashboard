@@ -15,6 +15,7 @@ OUTPUTS = [
     ("HistogramOutput1 (Copy 3)", "_PSD", ".xmh", "nCodeXmlHistogram"),
     ("HistogramOutput1 (Copy 4)", "_PSD_Strain", ".xmh", "nCodeXmlHistogram"),
     ("HistogramOutput1 (Copy 5)", "_SRS", ".xmh", "nCodeXmlHistogram"),
+    ("HistogramOutput1 (Copy 6)", "_SRS_Strain", ".xmh", "nCodeXmlHistogram"),
 ]
 
 WORK_DIR = PSD_OUTPUT_DIR / "_flowproc_work"
@@ -259,6 +260,7 @@ def make_flow_script(input_file: Path) -> Path:
 
     lines.extend(
         [
+            f"DoCommand({TS_INPUT_GLYPH}, ClearFiles)",
             f'DoCommand({TS_INPUT_GLYPH}, AddFiles, "{quote_for_flowproc(input_file)};ats")',
             "",
         ]
